@@ -1,0 +1,7 @@
+user server
+topic write commands
+topic read data
+
+user gateway
+topic read commands
+topic write data
