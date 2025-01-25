@@ -33,8 +33,8 @@
 
     3. Publish a message to that same topic as a gateway:
 
-    ```
-    mosquitto_pub -t data -u gateway -P <PASSWORD> --cafile demo-certs/ca.crt --cert demo-certs/client2.crt --key demo-certs/client2.key -m "Hello"
-    ```
-
-    You should see "Hello" appear in the pane running `mosquitto_sub`.
+        ```
+        mosquitto_pub -t data -u gateway -P <PASSWORD> --cafile demo-certs/ca.crt --cert demo-certs/client2.crt --key demo-certs/client2.key -m "Hello"
+        ```
+    
+        You should see "Hello" appear in the pane running `mosquitto_sub`.
