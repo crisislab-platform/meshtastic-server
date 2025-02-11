@@ -16,6 +16,12 @@
 					openssl
 				];
 			};
+
+			api = pkgs.mkShell {
+				buildInputs = with pkgs; [
+					protobuf
+				];
+			};
 		};
 	});
 }

@@ -1,0 +1,13 @@
+[package]
+name = "api-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = { version = "0.8.1", features = ["ws"] }
+prost = "0.13"
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1.43.0", features = ["full"] }
+
+[build-dependencies]
+prost-build = "0.13"
