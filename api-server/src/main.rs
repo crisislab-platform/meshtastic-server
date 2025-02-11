@@ -1,7 +1,7 @@
 mod proto;
 
 use prost::Message;
-use proto::proto::FileInfo;
+use proto::meshtastic::FileInfo;
 
 fn main() {
     let file_info = FileInfo {

@@ -20,6 +20,7 @@
 			api = pkgs.mkShell {
 				buildInputs = with pkgs; [
 					protobuf
+					git
 				];
 			};
 		};
