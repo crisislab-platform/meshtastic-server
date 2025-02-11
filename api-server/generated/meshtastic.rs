@@ -1154,6 +1154,11 @@ pub mod config {
         /// Indicates how to rotate or invert the compass output to accurate display on the display.
         #[prost(enumeration = "display_config::CompassOrientation", tag = "11")]
         pub compass_orientation: i32,
+        ///
+        /// If false (default), the device will display the time in 24-hour format on screen.
+        /// If true, the device will display the time in 12-hour format on screen.
+        #[prost(bool, tag = "12")]
+        pub use_12h_clock: bool,
     }
     /// Nested message and enum types in `DisplayConfig`.
     pub mod display_config {
@@ -2634,7 +2639,7 @@ pub mod module_config {
         pub health_screen_enabled: bool,
     }
     ///
-    /// TODO: REPLACE
+    /// Canned Messages Module Config
     #[derive(serde::Serialize)]
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct CannedMessageConfig {
