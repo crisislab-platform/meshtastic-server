@@ -2,7 +2,7 @@ use crate::config::CONFIG;
 use tokio::{sync::{broadcast, mpsc}, task::JoinHandle};
 use rumqttc::{AsyncClient, Event, EventLoop, MqttOptions, Packet};
 use std::time::Duration;
-use log::{debug, error, info};
+use log::{debug, error};
 
 pub type MqttPacket = (String, Vec<u8>); // topic and bytes
 

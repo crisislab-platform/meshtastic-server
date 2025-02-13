@@ -8,12 +8,13 @@ pub struct Config {
     pub mqtt_port: u16,
     pub mqtt_qos: QoS,
     pub mqtt_topics: Vec<String>,
-    pub channel_capacity: usize
+    pub channel_capacity: usize,
+    pub server_port: u16
 }
 
 fn get_env_var(name: &str) -> String {
     std::env::var(name)
-        .expect(&format!("Environment variable {} must be set", name))
+        .expect(&format!("Environment variable {}", name))
 }
 
 fn qos_from_str(string: &str) -> Result<QoS, String> {
@@ -38,6 +39,8 @@ pub static CONFIG: Lazy<Config> = Lazy::new(|| {
             .map(|topic| topic.to_string())
             .collect(),
         channel_capacity: get_env_var("CHANNEL_CAPACITY")
-            .parse::<usize>().expect("CHANNEL_CAPACITY must be a usize")
+            .parse::<usize>().expect("CHANNEL_CAPACITY must be a usize"),
+        server_port: get_env_var("SERVER_PORT")
+            .parse::<u16>().expect("SERVER_PORT must be a u16")
     }
 });
