@@ -5958,3 +5958,54 @@ impl ExcludedModules {
         }
     }
 }
+#[derive(serde::Serialize)]
+#[derive(Clone, Copy, PartialEq, ::prost::Message)]
+pub struct CrisislabCommand {
+    #[prost(enumeration = "crisislab_command::Type", tag = "1")]
+    pub r#type: i32,
+    #[prost(oneof = "crisislab_command::Payload", tags = "2")]
+    pub payload: ::core::option::Option<crisislab_command::Payload>,
+}
+/// Nested message and enum types in `CrisislabCommand`.
+pub mod crisislab_command {
+    #[derive(serde::Serialize)]
+    #[derive(
+        Clone,
+        Copy,
+        Debug,
+        PartialEq,
+        Eq,
+        Hash,
+        PartialOrd,
+        Ord,
+        ::prost::Enumeration
+    )]
+    #[repr(i32)]
+    pub enum Type {
+        SetBroadcastInterval = 0,
+    }
+    impl Type {
+        /// String value of the enum field names used in the ProtoBuf definition.
+        ///
+        /// The values are not transformed in any way and thus are considered stable
+        /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+        pub fn as_str_name(&self) -> &'static str {
+            match self {
+                Self::SetBroadcastInterval => "SET_BROADCAST_INTERVAL",
+            }
+        }
+        /// Creates an enum from field names used in the ProtoBuf definition.
+        pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+            match value {
+                "SET_BROADCAST_INTERVAL" => Some(Self::SetBroadcastInterval),
+                _ => None,
+            }
+        }
+    }
+    #[derive(serde::Serialize)]
+    #[derive(Clone, Copy, PartialEq, ::prost::Oneof)]
+    pub enum Payload {
+        #[prost(uint32, tag = "2")]
+        BroadcastIntervalSeconds(u32),
+    }
+}

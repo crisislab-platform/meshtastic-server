@@ -15,7 +15,13 @@ fn main() -> Result<()> {
     Config::new()
         .type_attribute(".", "#[derive(serde::Serialize)]")
         .out_dir(out_dir)
-        .compile_protos(&["../protobufs/meshtastic/mesh.proto"], &["../protobufs"])?;
+        .compile_protos(
+            &[
+                "../protobufs/meshtastic/mesh.proto",
+                "../protobufs/meshtastic/crisislab.proto",
+            ],
+            &["../protobufs"]
+        )?;
 
     Ok(())
 }

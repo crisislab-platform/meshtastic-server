@@ -1,7 +1,11 @@
 user server
 topic write commands
-topic read data
+topic read data/live
+topic read data/signal
+topic write data/routes
 
 user gateway
 topic read commands
-topic write data
+topic write data/live
+topic write data/signal
+topic read data/routes

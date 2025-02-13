@@ -1,20 +1,27 @@
 mod proto;
+mod routes;
+mod mqtt;
+mod config;
 
-use prost::Message;
-use proto::meshtastic::FileInfo;
+use axum::{
+    Router,
+    routing::post
+};
+use log::{debug, info};
+use std::sync::Arc;
 
-fn main() {
-    let file_info = FileInfo {
-        file_name: "test".to_string(),
-        size_bytes: 123
-    };
+#[tokio::main]
+async fn main() {
+    dotenvy::dotenv().ok();
+    env_logger::init();
 
-    let mut buffer = Vec::new();
-    file_info.encode(&mut buffer).expect("Failed to encode");
+    let mqtt_task_channels = mqtt::init_client().await;
+    let mqtt_task_channels = Arc::new(mqtt_task_channels);
 
-    println!("encoded {} bytes: {:?}", buffer.len(), buffer);
+    let app = Router::new()
+        .route("/set-broadcast-interval", post(routes::set_broadcast_interval))
+        .with_state(mqtt_task_channels);
 
-    let decoded = FileInfo::decode(&buffer[..]).expect("Failed to decode");
-
-    println!("decoded: {:?}", decoded);
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
+    axum::serve(listener, app).await.unwrap();
 }
