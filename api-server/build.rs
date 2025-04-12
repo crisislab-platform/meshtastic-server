@@ -1,9 +1,5 @@
-use std::{
-    io::Result,
-    fs::create_dir,
-    path::Path
-};
 use prost_build::Config;
+use std::{fs::create_dir, io::Result, path::Path};
 
 fn main() -> Result<()> {
     let out_dir = "generated";
@@ -20,7 +16,7 @@ fn main() -> Result<()> {
                 "../protobufs/meshtastic/mesh.proto",
                 "../protobufs/meshtastic/crisislab.proto",
             ],
-            &["../protobufs"]
+            &["../protobufs"],
         )?;
 
     Ok(())

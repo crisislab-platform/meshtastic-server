@@ -1,30 +1,46 @@
 use crate::config::CONFIG;
-use tokio::{sync::{broadcast, mpsc}, task::JoinHandle};
+use bytes::Bytes;
+use log::{debug, error, info};
 use rumqttc::{AsyncClient, Event, EventLoop, MqttOptions, Packet};
 use std::time::Duration;
-use log::{debug, error};
+use tokio::{
+    sync::{broadcast, mpsc},
+    task::JoinHandle,
+};
 
-pub type MqttPacket = (String, Vec<u8>); // topic and bytes
+pub type MqttPacket = (String, Bytes); // topic and bytes
 
-fn publisher_task(
-    client: AsyncClient,
-    mut rx: mpsc::Receiver<MqttPacket>
-) -> JoinHandle<()> {
+fn publisher_task(client: AsyncClient, mut rx: mpsc::Receiver<MqttPacket>) -> JoinHandle<()> {
     tokio::spawn(async move {
         debug!("Starting MQTT publisher task");
 
+        // when we have a message on the mpsc channel, publish it to the MQTT broker
         while let Some((topic, bytes)) = rx.recv().await {
-            client.publish(topic, CONFIG.mqtt_qos, false, bytes.as_slice())
-                .await.unwrap_or_else(|error| {
+            client
+                .publish(topic, CONFIG.mqtt_qos, false, bytes)
+                .await
+                .unwrap_or_else(|error| {
                     error!("Failed to publish MQTT message: {:?}", error);
                 });
         }
     })
 }
 
+fn handle_mqtt_message(
+    topic: String,
+    payload: Bytes,
+    tx_to_handlers: broadcast::Sender<MqttPacket>,
+) {
+    info!(
+        "Got message from MQTT on \"{}\" topic ({} bytes)",
+        topic,
+        payload.len()
+    );
+}
+
 fn subscriber_task(
     mut event_loop: EventLoop,
-    tx: broadcast::Sender<MqttPacket>
+    tx_to_handlers: broadcast::Sender<MqttPacket>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         debug!("Starting MQTT subscriber task");
@@ -32,16 +48,9 @@ fn subscriber_task(
         loop {
             match event_loop.poll().await {
                 Ok(event) => {
+                    // for every message being received from the broker
                     if let Event::Incoming(Packet::Publish(packet)) = event {
-                        debug!("Got message from MQTT on \"{}\" topic ({} bytes)", packet.topic, packet.payload.len());
-
-                        if tx.receiver_count() == 0 {
-                            debug!("No broadcast receivers, skipping broadcast");
-                            continue;
-                        }
-
-                        tx.send((packet.topic, packet.payload.to_vec()))
-                            .expect("Failed to broadcast MQTT message");
+                        handle_mqtt_message(packet.topic, packet.payload, tx_to_handlers.clone());
                     }
                 }
                 Err(error) => {
@@ -53,14 +62,35 @@ fn subscriber_task(
     })
 }
 
-pub struct MqttTaskChannels {
-    pub mpsc_tx: mpsc::Sender<MqttPacket>,
-    pub broadcast_tx: broadcast::Sender<MqttPacket>
+// dear future dev/maintainer/me: the following three blocks may look convoluted but it should make
+// unit testing a lot easier since we can use dependency injection to run the server with a mock
+// LoraGatewayInterface
+
+pub trait LoraGatewayInterface: Send + Sync + 'static {
+    fn clone_sender_to_publisher(&self) -> mpsc::Sender<MqttPacket>;
+    fn subscribe(&self) -> broadcast::Receiver<MqttPacket>;
 }
 
-pub async fn init_client() -> MqttTaskChannels {
+pub struct MqttInterface {
+    sender_to_publisher: mpsc::Sender<MqttPacket>,
+    sender_to_subscribers: broadcast::Sender<MqttPacket>,
+}
+
+impl LoraGatewayInterface for MqttInterface {
+    fn clone_sender_to_publisher(&self) -> mpsc::Sender<MqttPacket> {
+        self.sender_to_publisher.clone()
+    }
+
+    fn subscribe(&self) -> broadcast::Receiver<MqttPacket> {
+        self.sender_to_subscribers.subscribe()
+    }
+}
+
+pub async fn init_client() -> MqttInterface {
     let mut options = MqttOptions::new(
-        "crisislab-api-server", CONFIG.mqtt_host.as_str(), CONFIG.mqtt_port
+        "crisislab-api-server",
+        CONFIG.mqtt_host.as_str(),
+        CONFIG.mqtt_port,
     );
 
     options.set_keep_alive(Duration::from_secs(30));
@@ -69,17 +99,27 @@ pub async fn init_client() -> MqttTaskChannels {
     let (client, event_loop) = AsyncClient::new(options, CONFIG.channel_capacity);
 
     for topic in &CONFIG.mqtt_topics {
-        client.subscribe(topic, CONFIG.mqtt_qos)
-            .await.expect(&format!("Failed to subscribe to {} channel", topic));
+        client
+            .subscribe(topic, CONFIG.mqtt_qos)
+            .await
+            .expect(&format!("Failed to subscribe to {} channel", topic));
     }
 
-    let (mpsc_tx, mpsc_rx) = mpsc::channel::<MqttPacket>(CONFIG.channel_capacity);
-    let (broadcast_tx, _) = broadcast::channel::<MqttPacket>(
-        CONFIG.channel_capacity
-    );
+    // channel for sending message from the mqtt subscriber task to all the endpoint handlers
+    let (sender_to_publisher, outgoing_msg_receiver) =
+        mpsc::channel::<MqttPacket>(CONFIG.channel_capacity);
 
-    publisher_task(client, mpsc_rx);
-    subscriber_task(event_loop, broadcast_tx.clone());
+    // channel for endpoint handlers to send message to the mqtt publisher task
+    let (sender_to_subscribers, _) = broadcast::channel::<MqttPacket>(CONFIG.channel_capacity);
 
-    MqttTaskChannels { mpsc_tx, broadcast_tx }
+    publisher_task(client, outgoing_msg_receiver);
+
+    // we need to clone the broadcast transmitter because it's being returned
+    // so that .subscribe() can be called on it to create a receiver
+    subscriber_task(event_loop, sender_to_subscribers.clone());
+
+    MqttInterface {
+        sender_to_publisher,
+        sender_to_subscribers,
+    }
 }

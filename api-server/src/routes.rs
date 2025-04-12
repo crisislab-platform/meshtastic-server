@@ -1,34 +1,62 @@
 use std::sync::Arc;
 
-use axum::{extract::State, response::IntoResponse, Json};
-use log::debug;
-use serde::Deserialize;
-use crate::{mqtt::MqttTaskChannels, proto::meshtastic::{crisislab_command, CrisislabCommand}};
+use crate::{
+    mqtt::LoraGatewayInterface,
+    proto::meshtastic::{crisislab_command, CrisislabCommand},
+    utils::SimpleResponse,
+};
+use axum::{extract::State, http::StatusCode, Json};
+use bytes::BytesMut;
+use log::{debug, info};
 use prost::Message;
+use serde::Deserialize;
 
 #[derive(Deserialize)]
 pub struct SetBroadcastInterval {
     broadcast_interval_seconds: u32,
 }
 
+/// Returns a JSON object with an error message if something goes wrong, otherwise just a 200 OK
 pub async fn set_broadcast_interval(
-    State(mqtt_task_channels): State<Arc<MqttTaskChannels>>,
-    Json(body): Json<SetBroadcastInterval>
-) -> impl IntoResponse {
-    debug!("Got request to set broadcast interval to {} seconds", body.broadcast_interval_seconds);
+    State(mqtt_interface): State<Arc<impl LoraGatewayInterface>>,
+    Json(body): Json<SetBroadcastInterval>,
+) -> SimpleResponse {
+    debug!(
+        "Got request to set broadcast interval to {} seconds",
+        body.broadcast_interval_seconds
+    );
 
     let command = CrisislabCommand {
         r#type: crisislab_command::Type::SetBroadcastInterval.into(),
         payload: Some(crisislab_command::Payload::BroadcastIntervalSeconds(
-            body.broadcast_interval_seconds
-        ))
+            body.broadcast_interval_seconds,
+        )),
     };
 
-    let mut buffer = Vec::with_capacity(command.encoded_len());
-    command.encode(&mut buffer) .expect("Failed to encode command protobuf");
+    let mut buffer = BytesMut::with_capacity(command.encoded_len());
+    if let Err(error) = command.encode(&mut buffer) {
+        return SimpleResponse::Err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to encode command: {:?}", error),
+        )
+        .log();
+    }
 
-    mqtt_task_channels.mpsc_tx.clone().send(("commands".to_string(), buffer))
-        .await.expect("Failed to send command to MQTT task for publishing");
+    debug!("Encoded set broadcast interval command: {:?}", buffer);
 
-    "OK"
+    if let Err(error) = mqtt_interface
+        .clone_sender_to_publisher()
+        .send(("commands".to_string(), buffer.freeze()))
+        .await
+    {
+        return SimpleResponse::Err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to send command to MQTT publisher task: {:?}", error),
+        )
+        .log();
+    }
+
+    info!("Sent set broadcast interval command to MQTT publisher task");
+
+    return SimpleResponse::Ok;
 }
