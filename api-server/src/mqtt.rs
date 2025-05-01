@@ -8,16 +8,19 @@ use tokio::{
     task::JoinHandle,
 };
 
-pub type MqttPacket = (String, Bytes); // topic and bytes
-
-fn publisher_task(client: AsyncClient, mut rx: mpsc::Receiver<MqttPacket>) -> JoinHandle<()> {
+fn publisher_task(client: AsyncClient, mut rx: mpsc::Receiver<Bytes>) -> JoinHandle<()> {
     tokio::spawn(async move {
         debug!("Starting MQTT publisher task");
 
         // when we have a message on the mpsc channel, publish it to the MQTT broker
-        while let Some((topic, bytes)) = rx.recv().await {
+        while let Some(bytes) = rx.recv().await {
             client
-                .publish(topic, CONFIG.mqtt_qos, false, bytes)
+                .publish(
+                    CONFIG.mqtt_outgoing_topic.clone(),
+                    CONFIG.mqtt_qos,
+                    false,
+                    bytes,
+                )
                 .await
                 .unwrap_or_else(|error| {
                     error!("Failed to publish MQTT message: {:?}", error);
@@ -26,11 +29,7 @@ fn publisher_task(client: AsyncClient, mut rx: mpsc::Receiver<MqttPacket>) -> Jo
     })
 }
 
-fn handle_mqtt_message(
-    topic: String,
-    payload: Bytes,
-    tx_to_handlers: broadcast::Sender<MqttPacket>,
-) {
+fn handle_mqtt_message(topic: String, payload: Bytes, tx_to_handlers: broadcast::Sender<Bytes>) {
     info!(
         "Got message from MQTT on \"{}\" topic ({} bytes)",
         topic,
@@ -40,7 +39,7 @@ fn handle_mqtt_message(
 
 fn subscriber_task(
     mut event_loop: EventLoop,
-    tx_to_handlers: broadcast::Sender<MqttPacket>,
+    tx_to_handlers: broadcast::Sender<Bytes>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         debug!("Starting MQTT subscriber task");
@@ -67,21 +66,21 @@ fn subscriber_task(
 // LoraGatewayInterface
 
 pub trait LoraGatewayInterface: Send + Sync + 'static {
-    fn clone_sender_to_publisher(&self) -> mpsc::Sender<MqttPacket>;
-    fn subscribe(&self) -> broadcast::Receiver<MqttPacket>;
+    fn clone_sender_to_publisher(&self) -> mpsc::Sender<Bytes>;
+    fn subscribe(&self) -> broadcast::Receiver<Bytes>;
 }
 
 pub struct MqttInterface {
-    sender_to_publisher: mpsc::Sender<MqttPacket>,
-    sender_to_subscribers: broadcast::Sender<MqttPacket>,
+    sender_to_publisher: mpsc::Sender<Bytes>,
+    sender_to_subscribers: broadcast::Sender<Bytes>,
 }
 
 impl LoraGatewayInterface for MqttInterface {
-    fn clone_sender_to_publisher(&self) -> mpsc::Sender<MqttPacket> {
+    fn clone_sender_to_publisher(&self) -> mpsc::Sender<Bytes> {
         self.sender_to_publisher.clone()
     }
 
-    fn subscribe(&self) -> broadcast::Receiver<MqttPacket> {
+    fn subscribe(&self) -> broadcast::Receiver<Bytes> {
         self.sender_to_subscribers.subscribe()
     }
 }
@@ -98,19 +97,20 @@ pub async fn init_client() -> MqttInterface {
 
     let (client, event_loop) = AsyncClient::new(options, CONFIG.channel_capacity);
 
-    for topic in &CONFIG.mqtt_topics {
-        client
-            .subscribe(topic, CONFIG.mqtt_qos)
-            .await
-            .expect(&format!("Failed to subscribe to {} channel", topic));
-    }
+    client
+        .subscribe(CONFIG.mqtt_incoming_topic.clone(), CONFIG.mqtt_qos)
+        .await
+        .expect(&format!(
+            "Failed to subscribe to {} channel",
+            CONFIG.mqtt_incoming_topic
+        ));
 
     // channel for sending message from the mqtt subscriber task to all the endpoint handlers
     let (sender_to_publisher, outgoing_msg_receiver) =
-        mpsc::channel::<MqttPacket>(CONFIG.channel_capacity);
+        mpsc::channel::<Bytes>(CONFIG.channel_capacity);
 
     // channel for endpoint handlers to send message to the mqtt publisher task
-    let (sender_to_subscribers, _) = broadcast::channel::<MqttPacket>(CONFIG.channel_capacity);
+    let (sender_to_subscribers, _) = broadcast::channel::<Bytes>(CONFIG.channel_capacity);
 
     publisher_task(client, outgoing_msg_receiver);
 

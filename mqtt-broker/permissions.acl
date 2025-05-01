@@ -1,11 +1,7 @@
 user server
-topic write commands
-topic read data/live
-topic read data/signal
-topic write data/routes
+topic write for-mesh
+topic read for-server
 
 user gateway
-topic read commands
-topic write data/live
-topic write data/signal
-topic read data/routes
+topic write for-server
+topic read for-mesh

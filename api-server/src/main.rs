@@ -1,5 +1,6 @@
 mod config;
 mod mqtt;
+mod pathfinding;
 mod proto;
 mod routes;
 mod utils;
@@ -12,8 +13,12 @@ use std::sync::Arc;
 pub fn init_app(lora_gateway_interface: impl LoraGatewayInterface) -> Router {
     Router::new()
         .route(
-            "/set-broadcast-interval",
-            post(routes::set_broadcast_interval),
+            "/admin/set-broadcast-interval",
+            post(routes::get_set_broadcast_interval_handler()),
+        )
+        .route(
+            "/admin/set-channel-name",
+            post(routes::get_set_channel_name_handler()),
         )
         .with_state(Arc::new(lora_gateway_interface))
 }

@@ -13,7 +13,6 @@ fn main() -> Result<()> {
         .out_dir(out_dir)
         .compile_protos(
             &[
-                "../protobufs/meshtastic/mesh.proto",
                 "../protobufs/meshtastic/crisislab.proto",
             ],
             &["../protobufs"],

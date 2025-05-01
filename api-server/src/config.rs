@@ -7,7 +7,8 @@ pub struct Config {
     pub mqtt_host: String,
     pub mqtt_port: u16,
     pub mqtt_qos: QoS,
-    pub mqtt_topics: Vec<String>,
+    pub mqtt_outgoing_topic: String,
+    pub mqtt_incoming_topic: String,
     pub channel_capacity: usize,
     pub server_port: u16,
 }
@@ -33,10 +34,8 @@ pub static CONFIG: Lazy<Config> = Lazy::new(|| Config {
         .parse::<u16>()
         .expect("MQTT_PORT must be a u16"),
     mqtt_qos: qos_from_str(get_env_var("MQTT_QOS").as_str()).unwrap(),
-    mqtt_topics: get_env_var("MQTT_TOPICS")
-        .split(",")
-        .map(|topic| topic.to_string())
-        .collect(),
+    mqtt_outgoing_topic: get_env_var("MQTT_OUTGOING_TOPIC"),
+    mqtt_incoming_topic: get_env_var("MQTT_INCOMING_TOPIC"),
     channel_capacity: get_env_var("CHANNEL_CAPACITY")
         .parse::<usize>()
         .expect("CHANNEL_CAPACITY must be a usize"),

@@ -26,11 +26,9 @@ impl IntoResponse for SimpleResponse {
     fn into_response(self) -> axum::response::Response {
         match self {
             SimpleResponse::Ok => StatusCode::OK.into_response(),
-            SimpleResponse::Err(status_code, message) => (
-                status_code,
-                Json(SimpleResponseError { error: message }),
-            )
-                .into_response(),
+            SimpleResponse::Err(status_code, message) => {
+                (status_code, Json(SimpleResponseError { error: message })).into_response()
+            }
         }
     }
 }
