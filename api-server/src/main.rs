@@ -1,6 +1,5 @@
 mod config;
 mod mqtt;
-mod pathfinding;
 mod proto;
 mod routes;
 mod utils;
