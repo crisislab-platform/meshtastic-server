@@ -29,6 +29,7 @@ fn publisher_task(client: AsyncClient, mut rx: mpsc::Receiver<Bytes>) -> JoinHan
     })
 }
 
+#[allow(unused_variables)]
 fn handle_mqtt_message(topic: String, payload: Bytes, tx_to_handlers: broadcast::Sender<Bytes>) {
     info!(
         "Got message from MQTT on \"{}\" topic ({} bytes)",

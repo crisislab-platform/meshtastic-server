@@ -19,6 +19,10 @@ pub fn init_app(lora_gateway_interface: impl LoraGatewayInterface) -> Router {
             "/admin/set-channel-name",
             post(routes::get_set_channel_name_handler()),
         )
+        .route(
+            "/admin/update-routes",
+            post(routes::update_routes),
+        )
         .with_state(Arc::new(lora_gateway_interface))
 }
 

@@ -2,11 +2,14 @@
 #[derive(serde::Serialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CrisislabMessage {
-    #[prost(oneof = "crisislab_message::Message", tags = "1, 2")]
+    #[prost(oneof = "crisislab_message::Message", tags = "1, 2, 3")]
     pub message: ::core::option::Option<crisislab_message::Message>,
 }
 /// Nested message and enum types in `CrisislabMessage`.
 pub mod crisislab_message {
+    #[derive(serde::Serialize)]
+    #[derive(Clone, Copy, PartialEq, ::prost::Message)]
+    pub struct Empty {}
     #[derive(serde::Serialize)]
     #[derive(Clone, PartialEq, ::prost::Oneof)]
     pub enum Message {
@@ -14,5 +17,7 @@ pub mod crisislab_message {
         BroadcastIntervalSeconds(u32),
         #[prost(string, tag = "2")]
         ChannelName(::prost::alloc::string::String),
+        #[prost(message, tag = "3")]
+        UpdateRoutes(Empty),
     }
 }
