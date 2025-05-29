@@ -1,6 +1,6 @@
-use crate::config::CONFIG;
+use crate::{config::CONFIG, MeshInterface};
 use bytes::Bytes;
-use log::{debug, error, info};
+use log::{debug, error};
 use rumqttc::{AsyncClient, Event, EventLoop, MqttOptions, Packet};
 use std::time::Duration;
 use tokio::{
@@ -31,11 +31,16 @@ fn publisher_task(client: AsyncClient, mut rx: mpsc::Receiver<Bytes>) -> JoinHan
 
 #[allow(unused_variables)]
 fn handle_mqtt_message(topic: String, payload: Bytes, tx_to_handlers: broadcast::Sender<Bytes>) {
-    info!(
+    debug!(
         "Got message from MQTT on \"{}\" topic ({} bytes)",
         topic,
         payload.len()
     );
+
+    // this logic might become more complex in the future
+    if let Err(error) = tx_to_handlers.send(payload) {
+        error!("Failed to send message to channel receivers. (No receivers?)");
+    }
 }
 
 fn subscriber_task(
@@ -62,31 +67,7 @@ fn subscriber_task(
     })
 }
 
-// dear future dev/maintainer/me: the following three blocks may look convoluted but it should make
-// unit testing a lot easier since we can use dependency injection to run the server with a mock
-// LoraGatewayInterface
-
-pub trait LoraGatewayInterface: Send + Sync + 'static {
-    fn clone_sender_to_publisher(&self) -> mpsc::Sender<Bytes>;
-    fn subscribe(&self) -> broadcast::Receiver<Bytes>;
-}
-
-pub struct MqttInterface {
-    sender_to_publisher: mpsc::Sender<Bytes>,
-    sender_to_subscribers: broadcast::Sender<Bytes>,
-}
-
-impl LoraGatewayInterface for MqttInterface {
-    fn clone_sender_to_publisher(&self) -> mpsc::Sender<Bytes> {
-        self.sender_to_publisher.clone()
-    }
-
-    fn subscribe(&self) -> broadcast::Receiver<Bytes> {
-        self.sender_to_subscribers.subscribe()
-    }
-}
-
-pub async fn init_client() -> MqttInterface {
+pub async fn init_client() -> MeshInterface {
     let mut options = MqttOptions::new(
         "crisislab-api-server",
         CONFIG.mqtt_host.as_str(),
@@ -119,7 +100,7 @@ pub async fn init_client() -> MqttInterface {
     // so that .subscribe() can be called on it to create a receiver
     subscriber_task(event_loop, sender_to_subscribers.clone());
 
-    MqttInterface {
+    MeshInterface {
         sender_to_publisher,
         sender_to_subscribers,
     }

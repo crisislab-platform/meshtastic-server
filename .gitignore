@@ -2,3 +2,4 @@ passwords.txt
 demo-certs
 target
 .env
+node_modules

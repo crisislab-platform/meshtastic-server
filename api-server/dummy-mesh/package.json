@@ -1,0 +1,10 @@
+{
+  "dependencies": {
+    "mqtt": "^5.13.0",
+    "protobufjs": "^7.5.1",
+    "readline-sync": "^1.4.10"
+  },
+  "devDependencies": {
+    "@types/readline-sync": "^1.4.8"
+  }
+}
