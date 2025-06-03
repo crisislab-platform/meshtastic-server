@@ -11,6 +11,7 @@ pub struct Config {
     pub mqtt_incoming_topic: String,
     pub channel_capacity: usize,
     pub server_port: u16,
+    pub default_signal_data_timeout_seconds: u32,
 }
 
 fn get_env_var(name: &str) -> String {
@@ -42,4 +43,7 @@ pub static CONFIG: Lazy<Config> = Lazy::new(|| Config {
     server_port: get_env_var("SERVER_PORT")
         .parse::<u16>()
         .expect("SERVER_PORT must be a u16"),
+    default_signal_data_timeout_seconds: get_env_var("DEFAULT_SIGNAL_DATA_TIMEOUT_SECONDS")
+        .parse::<u32>()
+        .expect("DEFAULT_SIGNAL_DATA_TIMEOUT_SECONDS must be a u32"),
 });

@@ -1,10 +1,10 @@
-use std::{collections::HashMap, future::Future, pin::Pin, time::Duration};
+use std::{collections::HashMap, time::Duration};
 
 use crate::{
     pathfinding::{self, compute_edge_weight, AdjacencyMap, NodeId},
     proto::meshtastic::{crisislab_message, CrisislabMessage},
-    utils::JsonAndStatusResponse,
-    AppState, MeshInterface,
+    utils::JsonOrErrorResponse,
+    AppSettings, AppState, MeshInterface,
 };
 use axum::{
     extract::{ws::WebSocket, State, WebSocketUpgrade},
@@ -13,7 +13,7 @@ use axum::{
     Json,
 };
 use bytes::BytesMut;
-use log::{debug, error};
+use log::{debug, error, info};
 use prost::Message;
 use serde::Deserialize;
 
@@ -41,84 +41,45 @@ async fn send_command_protobuf(
             error
         ))
     } else {
+        debug!("send_command_protobuf: sent message to MQTT publisher task");
         Ok(())
     }
 }
 
-/* This function returns an Axum handler for and endpoint which simply encodes a protobuf based on
-* a request body and forwards it to the mesh over MQTT. If something goes wrong, an error will be
-* returned in a JSON object, otherwise there will be no response body, just a 200 OK.
-*
-* In an attempt to answer some questions that this mildy concerning function signature may raise:
-* - T is the type of the request body
-* - T must be DeserializeOwned to ensure it doesn't contain any references that could be outlived
-* - T must be 'static since we return a pointer (whose referenced value could outlive this function)
-* - You can't use impl Trait in the returned function's signature since it wouldn't make it
-* concrete, hence the dyn on LoraGatewayInterface and the Future
-* - Since the returned function returns a Future (which could be self-referential), we need to pin
-* it to ensure those references remain valid
-* - The returned function must be Clone to satisfy Axum's Handler trait
-* */
-fn create_command_handler<T: Send + 'static>(
-    crisislab_message_creator: fn(T) -> CrisislabMessage,
-) -> impl Fn(
-    State<MeshInterface>,
-    T,
-) -> Pin<Box<dyn Future<Output = JsonAndStatusResponse<()>> + Send>>
-       + Clone {
-    move |State(mesh_interface): State<MeshInterface>, body: T| {
-        Box::pin(async move {
-            debug!("Running curried command handler");
+pub async fn set_mesh_setting(
+    State(mesh_interface): State<MeshInterface>,
+    Json(body): Json<crisislab_message::MeshSettings>,
+) -> JsonOrErrorResponse<()> {
+    info!("Setting mesh settings: {:?}", body);
 
-            let message = crisislab_message_creator(body);
+    let crisislab_message = CrisislabMessage {
+        message: Some(crisislab_message::Message::MeshSettings(body)),
+    };
 
-            if let Err(error_message) = send_command_protobuf(message, &mesh_interface).await {
-                JsonAndStatusResponse::Err(
-                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                    error_message,
-                )
-                .log()
-            } else {
-                JsonAndStatusResponse::Ok(())
-            }
-        })
+    if let Err(error_message) = send_command_protobuf(crisislab_message, &mesh_interface).await {
+        JsonOrErrorResponse::Err(StatusCode::INTERNAL_SERVER_ERROR, error_message).log()
+    } else {
+        JsonOrErrorResponse::Ok(())
     }
 }
 
-#[derive(Deserialize)]
-pub struct SetBroadcastIntervalBody {
-    broadcast_interval_seconds: u32,
+#[derive(Deserialize, Debug)]
+pub struct ServerSettingsBody {
+    signal_data_timeout_seconds: Option<u32>,
 }
 
-// /admin/set-broadcast-interval
-pub fn get_set_broadcast_interval_handler() -> impl Fn(
-    State<MeshInterface>,
-    Json<SetBroadcastIntervalBody>,
-) -> Pin<Box<dyn Future<Output = JsonAndStatusResponse<()>> + Send>>
-       + Clone {
-    create_command_handler(
-        |Json(body): Json<SetBroadcastIntervalBody>| CrisislabMessage {
-            message: Some(crisislab_message::Message::BroadcastIntervalSeconds(
-                body.broadcast_interval_seconds,
-            )),
-        },
-    )
-}
+#[axum::debug_handler]
+pub async fn set_server_setting(
+    State(mut app_settings): State<AppSettings>,
+    Json(body): Json<ServerSettingsBody>,
+) -> StatusCode {
+    info!("Setting server settings: {:?}", body);
 
-#[derive(Deserialize)]
-pub struct SetChannelNameBody {
-    channel_name: String,
-}
+    if let Some(signal_data_timeout_seconds) = body.signal_data_timeout_seconds {
+        app_settings.signal_data_timeout_seconds = signal_data_timeout_seconds;
+    }
 
-// /admin/set-channel-name
-pub fn get_set_channel_name_handler() -> impl Fn(
-    State<MeshInterface>,
-    Json<SetChannelNameBody>,
-) -> Pin<Box<dyn Future<Output = JsonAndStatusResponse<()>> + Send>>
-       + Clone {
-    create_command_handler(|Json(body): Json<SetChannelNameBody>| CrisislabMessage {
-        message: Some(crisislab_message::Message::ChannelName(body.channel_name)),
-    })
+    StatusCode::OK
 }
 
 type RoutesUpdateResponse = pathfinding::Routes<NodeId>;
@@ -127,16 +88,16 @@ type RoutesUpdateResponse = pathfinding::Routes<NodeId>;
 #[axum::debug_handler]
 pub async fn update_routes(
     State(mesh_interface): State<MeshInterface>,
-) -> JsonAndStatusResponse<RoutesUpdateResponse> {
+) -> JsonOrErrorResponse<RoutesUpdateResponse> {
     let update_routes_message = CrisislabMessage {
-        message: Some(crisislab_message::Message::UpdateRoutes(
+        message: Some(crisislab_message::Message::UpdateRoutesRequest(
             crisislab_message::Empty {},
         )),
     };
 
     if let Err(error_message) = send_command_protobuf(update_routes_message, &mesh_interface).await
     {
-        return JsonAndStatusResponse::Err(StatusCode::INTERNAL_SERVER_ERROR, error_message).log();
+        return JsonOrErrorResponse::Err(StatusCode::INTERNAL_SERVER_ERROR, error_message).log();
     }
 
     let mut receiver = mesh_interface.subscribe();
@@ -146,6 +107,7 @@ pub async fn update_routes(
 
     let _ = tokio::time::timeout(Duration::from_secs(80), async {
         debug!("Update routes handler waiting for signal data...");
+
         while let Ok(buffer) = receiver.recv().await {
             match CrisislabMessage::decode(buffer) {
                 Ok(message) => {
@@ -182,11 +144,29 @@ pub async fn update_routes(
 
     let routes = pathfinding::compute_routes(adjacency_map, gateway_ids);
 
-    // let routes_message = CrisislabMessage {
-    //     message: Some(crisislab_message::Message::updated_routes())
-    // }
+    // copy data from routes into the format expected by the protobuf
+    let routes_message = CrisislabMessage {
+        message: Some(crisislab_message::Message::UpdatedRoutes(
+            crisislab_message::RoutesMap {
+                entries: routes.iter().map(|(start_node_id, paths)| {
+                    (start_node_id.clone(), crisislab_message::routes_map::RoutesList {
+                        routes: paths.iter().map(|path| {
+                            crisislab_message::routes_map::Route {
+                                node_ids: path.clone()
+                            }
+                        }).collect(),
+                    })
+                }).collect::<HashMap<_, _>>(),
+            },
+        )),
+    };
 
-    JsonAndStatusResponse::Ok(routes)
+    if let Err(error_message) = send_command_protobuf(routes_message, &mesh_interface).await {
+        return JsonOrErrorResponse::Err(StatusCode::INTERNAL_SERVER_ERROR, error_message).log();
+    }
+
+    // return the more nicely fomatted routes to the web client
+    JsonOrErrorResponse::Ok(routes)
 }
 
 pub async fn live_info(
@@ -196,12 +176,26 @@ pub async fn live_info(
     websocket_upgrade.on_upgrade(|socket| handle_live_info_websocket(socket, state))
 }
 
-async fn handle_live_info_websocket(websocket: WebSocket, state: AppState) {
+async fn handle_live_info_websocket(mut websocket: WebSocket, state: AppState) {
+    info!("Client connected live info websocket");
+
     while let Ok(message) = state.mesh_interface.subscribe().recv().await {
         debug!("Live info websocket is listening for data from the mesh");
+
         match CrisislabMessage::decode(message) {
             Ok(crisislab_message) => {
-                // if let Some(crisislab_message::Message::LiveData)
+                if websocket
+                    .send(axum::extract::ws::Message::Text(
+                        serde_json::to_string(&crisislab_message)
+                            .expect("Failed to serialize CrisislabMessage for WS message")
+                            .into(),
+                    ))
+                    .await
+                    .is_err()
+                {
+                    debug!("Client closed WS connection, closing handler");
+                    return;
+                }
             }
             Err(error) => {
                 error!("Failed to decode CrisislabMessage: {:?}", error);

@@ -5,7 +5,11 @@ mod proto;
 mod routes;
 mod utils;
 
-use axum::{extract::FromRef, routing::{any, post}, Router};
+use axum::{
+    extract::FromRef,
+    routing::{any, post},
+    Router,
+};
 use bytes::Bytes;
 use config::CONFIG;
 use tokio::sync::{broadcast, mpsc};
@@ -13,6 +17,7 @@ use tokio::sync::{broadcast, mpsc};
 #[derive(Clone)]
 pub struct AppState {
     mesh_interface: MeshInterface,
+    app_settings: AppSettings,
 }
 
 #[derive(Clone)]
@@ -37,15 +42,23 @@ impl FromRef<AppState> for MeshInterface {
     }
 }
 
+#[derive(Clone)]
+pub struct AppSettings {
+    signal_data_timeout_seconds: u32,
+}
+
+impl FromRef<AppState> for AppSettings {
+    fn from_ref(app_state: &AppState) -> AppSettings {
+        app_state.app_settings.clone()
+    }
+}
+
 pub fn init_app(state: AppState) -> Router {
     Router::new()
+        .route("/admin/set-mesh-setting", post(routes::set_mesh_setting))
         .route(
-            "/admin/set-broadcast-interval",
-            post(routes::get_set_broadcast_interval_handler()),
-        )
-        .route(
-            "/admin/set-channel-name",
-            post(routes::get_set_channel_name_handler()),
+            "/admin/set-server-setting",
+            post(routes::set_server_setting),
         )
         .route("/admin/update-routes", post(routes::update_routes))
         .route("/info/live", any(routes::live_info))
@@ -58,7 +71,12 @@ async fn main() {
     env_logger::init();
 
     let mesh_interface = mqtt::init_client().await;
-    let app_state = AppState { mesh_interface };
+    let app_state = AppState {
+        mesh_interface,
+        app_settings: AppSettings {
+            signal_data_timeout_seconds: CONFIG.default_signal_data_timeout_seconds,
+        },
+    };
     let app = init_app(app_state);
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", CONFIG.server_port))

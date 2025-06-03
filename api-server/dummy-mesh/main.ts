@@ -33,30 +33,30 @@ for (let i = 0; i < 15; i++) {
 const randomLiveData = (HardwareModel, LocSource, AltSource) => {
 	const node = nodes[Math.floor(Math.random() * nodes.length)]
 	return {
-		nodeNum: node.node_num,
+		node_num: node.node_num,
 		timestamp: Math.floor(Date.now() / 1000),
 		user: {
 			id: node.user_id,
-			shortName: node.short_name,
-			longName: node.long_name,
-			hwModel: HardwareModel.values.TBEAM,
+			short_name: node.short_name,
+			long_name: node.long_name,
+			hw_model: HardwareModel.values.TBEAM,
 		},
 		position: {
-			latitudeI: Math.floor(Math.random() * 18000000) - 9000000, // -90 to 90 degrees
-			longitudeI: Math.floor(Math.random() * 36000000) - 18000000, // -180 to 180 degrees
+			latitude_i: Math.floor(Math.random() * 18000000) - 9000000, // -90 to 90 degrees
+			longitude_i: Math.floor(Math.random() * 36000000) - 18000000, // -180 to 180 degrees
 			altitude: Math.floor(Math.random() * 200), // Altitude in meters
-			locationSource: LocSource.values.LOC_INTERNAL,
-			altitudeSource: AltSource.values.ALT_INTERNAL,
-			gpsAccuracy: 3000, // in mm
-			groundSpeed: 0,
-			satsInView: Math.floor(Math.random() * 7),
+			location_source: LocSource.values.LOC_INTERNAL,
+			altitude_source: AltSource.values.ALT_INTERNAL,
+			gps_accuracy: 3000, // in mm
+			ground_speed: 0,
+			sats_in_view: Math.floor(Math.random() * 7),
 		},
-		deviceMetrics: {
-			batteryLevel: 101, // i.e. powered
+		device_metrics: {
+			battery_level: 101, // i.e. powered
 			voltage: 5.3,
-			channelUtilization: parseFloat((Math.random() * 5 + 2).toFixed(2)),
-			airUtilTx: parseFloat(Math.random().toFixed(3)),
-			uptimeSeconds: Math.floor(Date.now() / 1000) - startupTime,
+			channel_utilization: parseFloat((Math.random() * 5 + 2).toFixed(2)),
+			air_util_tx: parseFloat(Math.random().toFixed(3)),
+			uptime_seconds: Math.floor(Date.now() / 1000) - startupTime,
 		}
 	}
 }
@@ -82,7 +82,7 @@ protobuf.load("../../protobufs/bundle.json", async (error, root) => {
 			case 's':
 				for (const packet of example_signal_data1) {
 					const message = CrisislabMessage.create({
-						signalData: packet
+						signal_data: packet
 					})
 
 					const buffer = CrisislabMessage.encode(message).finish()
@@ -94,8 +94,12 @@ protobuf.load("../../protobufs/bundle.json", async (error, root) => {
 				console.log("Starting live data stream, use C-c to stop.")
 				while (true) {
 					const packet = randomLiveData(HardwareModel, LocSource, AltSource)
-					console.log(packet)
-					await new Promise(resolve => setTimeout(resolve, 1000))
+					const message = CrisislabMessage.create({
+						live_data: packet
+					})
+					const buffer = CrisislabMessage.encode(message).finish()
+					client.publish("for-server", Buffer.from(buffer))
+					await new Promise(resolve => setTimeout(resolve, 2000))
 				}
 			case 'q':
 				client.end()
@@ -111,7 +115,7 @@ protobuf.load("../../protobufs/bundle.json", async (error, root) => {
 const example_signal_data1 = [
 	{
 		to: 1,
-		isGateway: true,
+		is_gateway: true,
 		links: [
 			{ from: 2, rssi: -70, snr: 10 },
 			{ from: 4, rssi: -20, snr: 10 },
@@ -119,7 +123,7 @@ const example_signal_data1 = [
 	},
 	{
 		to: 2,
-		isGateway: false,
+		is_gateway: false,
 		links: [
 			{ from: 1, rssi: -70, snr: 10 },
 			{ from: 4, rssi: -20, snr: 10 },
@@ -128,7 +132,7 @@ const example_signal_data1 = [
 	},
 	{
 		to: 3,
-		isGateway: false,
+		is_gateway: false,
 		links: [
 			{ from: 2, rssi: -60, snr: 10 },
 			{ from: 5, rssi: -60, snr: 10 },
@@ -136,7 +140,7 @@ const example_signal_data1 = [
 	},
 	{
 		to: 4,
-		isGateway: true,
+		is_gateway: true,
 		links: [
 			{ from: 1, rssi: -20, snr: 10 },
 			{ from: 5, rssi: -20, snr: 10 },
@@ -145,7 +149,7 @@ const example_signal_data1 = [
 	},
 	{
 		to: 5,
-		isGateway: false,
+		is_gateway: false,
 		links: [
 			{ from: 4, rssi: -20, snr: 10 },
 			{ from: 2, rssi: -30, snr: 10 },
