@@ -2,7 +2,7 @@
 /// This is the inner options message, which basically defines options for
 /// a field. When it is used in message or file scope, it applies to all
 /// fields.
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct NanoPbOptions {
     /// Allocated size for 'bytes' and 'string' fields.
@@ -118,7 +118,7 @@ pub struct NanoPbOptions {
     #[prost(enumeration = "FieldType", optional, tag = "29", default = "FtCallback")]
     pub fallback_type: ::core::option::Option<i32>,
 }
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum FieldType {
@@ -163,7 +163,7 @@ impl FieldType {
         }
     }
 }
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum IntSize {
@@ -200,7 +200,7 @@ impl IntSize {
         }
     }
 }
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum TypenameMangling {
@@ -237,7 +237,7 @@ impl TypenameMangling {
         }
     }
 }
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
 #[repr(i32)]
 pub enum DescriptorSize {

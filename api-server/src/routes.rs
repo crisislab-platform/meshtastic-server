@@ -3,8 +3,8 @@ use std::{collections::HashMap, time::Duration};
 use crate::{
     pathfinding::{self, compute_edge_weight, AdjacencyMap, NodeId},
     proto::meshtastic::{crisislab_message, CrisislabMessage},
-    utils::JsonOrErrorResponse,
-    AppSettings, AppState, MeshInterface,
+    utils::{FallibleJsonResponse, StringOrEmptyResponse},
+    AppState, MeshInterface,
 };
 use axum::{
     extract::{ws::WebSocket, State, WebSocketUpgrade},
@@ -46,10 +46,11 @@ async fn send_command_protobuf(
     }
 }
 
-pub async fn set_mesh_setting(
+#[axum::debug_handler]
+pub async fn set_mesh_settings(
     State(mesh_interface): State<MeshInterface>,
     Json(body): Json<crisislab_message::MeshSettings>,
-) -> JsonOrErrorResponse<()> {
+) -> StringOrEmptyResponse {
     info!("Setting mesh settings: {:?}", body);
 
     let crisislab_message = CrisislabMessage {
@@ -57,23 +58,26 @@ pub async fn set_mesh_setting(
     };
 
     if let Err(error_message) = send_command_protobuf(crisislab_message, &mesh_interface).await {
-        JsonOrErrorResponse::Err(StatusCode::INTERNAL_SERVER_ERROR, error_message).log()
+        StringOrEmptyResponse::Err(StatusCode::INTERNAL_SERVER_ERROR, error_message).log()
     } else {
-        JsonOrErrorResponse::Ok(())
+        StringOrEmptyResponse::Ok
     }
 }
 
 #[derive(Deserialize, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct ServerSettingsBody {
     signal_data_timeout_seconds: Option<u32>,
 }
 
 #[axum::debug_handler]
-pub async fn set_server_setting(
-    State(mut app_settings): State<AppSettings>,
+pub async fn set_server_settings(
+    State(state): State<AppState>,
     Json(body): Json<ServerSettingsBody>,
 ) -> StatusCode {
     info!("Setting server settings: {:?}", body);
+
+    let mut app_settings = state.app_settings.lock().await;
 
     if let Some(signal_data_timeout_seconds) = body.signal_data_timeout_seconds {
         app_settings.signal_data_timeout_seconds = signal_data_timeout_seconds;
@@ -87,26 +91,39 @@ type RoutesUpdateResponse = pathfinding::Routes<NodeId>;
 // /admin/update-routes
 #[axum::debug_handler]
 pub async fn update_routes(
-    State(mesh_interface): State<MeshInterface>,
-) -> JsonOrErrorResponse<RoutesUpdateResponse> {
+    State(state): State<AppState>,
+) -> FallibleJsonResponse<RoutesUpdateResponse> {
     let update_routes_message = CrisislabMessage {
         message: Some(crisislab_message::Message::UpdateRoutesRequest(
             crisislab_message::Empty {},
         )),
     };
 
-    if let Err(error_message) = send_command_protobuf(update_routes_message, &mesh_interface).await
+    if let Err(error_message) =
+        send_command_protobuf(update_routes_message, &state.mesh_interface).await
     {
-        return JsonOrErrorResponse::Err(StatusCode::INTERNAL_SERVER_ERROR, error_message).log();
+        return FallibleJsonResponse::Err(StatusCode::INTERNAL_SERVER_ERROR, error_message).log();
     }
 
-    let mut receiver = mesh_interface.subscribe();
+    let mut receiver = state.mesh_interface.subscribe();
 
     let mut adjacency_map: AdjacencyMap<NodeId> = HashMap::new();
     let mut gateway_ids = Vec::<NodeId>::new();
 
-    let _ = tokio::time::timeout(Duration::from_secs(80), async {
-        debug!("Update routes handler waiting for signal data...");
+    let timeout_duration = Duration::from_secs(
+        state
+            .app_settings
+            .lock()
+            .await
+            .signal_data_timeout_seconds
+            .into(),
+    );
+
+    let _ = tokio::time::timeout(timeout_duration, async {
+        debug!(
+            "Update routes handler waiting for signal data... (timeout after {:?})",
+            timeout_duration
+        );
 
         while let Ok(buffer) = receiver.recv().await {
             match CrisislabMessage::decode(buffer) {
@@ -148,25 +165,32 @@ pub async fn update_routes(
     let routes_message = CrisislabMessage {
         message: Some(crisislab_message::Message::UpdatedRoutes(
             crisislab_message::RoutesMap {
-                entries: routes.iter().map(|(start_node_id, paths)| {
-                    (start_node_id.clone(), crisislab_message::routes_map::RoutesList {
-                        routes: paths.iter().map(|path| {
-                            crisislab_message::routes_map::Route {
-                                node_ids: path.clone()
-                            }
-                        }).collect(),
+                entries: routes
+                    .iter()
+                    .map(|(start_node_id, paths)| {
+                        (
+                            start_node_id.clone(),
+                            crisislab_message::routes_map::RoutesList {
+                                routes: paths
+                                    .iter()
+                                    .map(|path| crisislab_message::routes_map::Route {
+                                        node_ids: path.clone(),
+                                    })
+                                    .collect(),
+                            },
+                        )
                     })
-                }).collect::<HashMap<_, _>>(),
+                    .collect::<HashMap<_, _>>(),
             },
         )),
     };
 
-    if let Err(error_message) = send_command_protobuf(routes_message, &mesh_interface).await {
-        return JsonOrErrorResponse::Err(StatusCode::INTERNAL_SERVER_ERROR, error_message).log();
+    if let Err(error_message) = send_command_protobuf(routes_message, &state.mesh_interface).await {
+        return FallibleJsonResponse::Err(StatusCode::INTERNAL_SERVER_ERROR, error_message).log();
     }
 
     // return the more nicely fomatted routes to the web client
-    JsonOrErrorResponse::Ok(routes)
+    FallibleJsonResponse::Ok(routes)
 }
 
 pub async fn live_info(

@@ -9,7 +9,8 @@ fn main() -> Result<()> {
     }
 
     Config::new()
-        .type_attribute(".", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .type_attribute(".", "#[derive(serde::Serialize)]")
+        .type_attribute("meshtastic.CrisislabMessage.MeshSettings", "#[derive(serde::Deserialize)] #[serde(deny_unknown_fields)]")
         .out_dir(out_dir)
         .compile_protos(
             &[

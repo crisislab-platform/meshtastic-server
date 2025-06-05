@@ -12,12 +12,13 @@ use axum::{
 };
 use bytes::Bytes;
 use config::CONFIG;
-use tokio::sync::{broadcast, mpsc};
+use std::sync::Arc;
+use tokio::sync::{broadcast, mpsc, Mutex};
 
 #[derive(Clone)]
 pub struct AppState {
     mesh_interface: MeshInterface,
-    app_settings: AppSettings,
+    app_settings: Arc<Mutex<AppSettings>>,
 }
 
 #[derive(Clone)]
@@ -47,18 +48,12 @@ pub struct AppSettings {
     signal_data_timeout_seconds: u32,
 }
 
-impl FromRef<AppState> for AppSettings {
-    fn from_ref(app_state: &AppState) -> AppSettings {
-        app_state.app_settings.clone()
-    }
-}
-
 pub fn init_app(state: AppState) -> Router {
     Router::new()
-        .route("/admin/set-mesh-setting", post(routes::set_mesh_setting))
+        .route("/admin/set-mesh-settings", post(routes::set_mesh_settings))
         .route(
-            "/admin/set-server-setting",
-            post(routes::set_server_setting),
+            "/admin/set-server-settings",
+            post(routes::set_server_settings),
         )
         .route("/admin/update-routes", post(routes::update_routes))
         .route("/info/live", any(routes::live_info))
@@ -73,9 +68,9 @@ async fn main() {
     let mesh_interface = mqtt::init_client().await;
     let app_state = AppState {
         mesh_interface,
-        app_settings: AppSettings {
+        app_settings: Arc::new(Mutex::new(AppSettings {
             signal_data_timeout_seconds: CONFIG.default_signal_data_timeout_seconds,
-        },
+        })),
     };
     let app = init_app(app_state);
 
