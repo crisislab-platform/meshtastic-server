@@ -7,7 +7,7 @@ mod utils;
 
 use axum::{
     extract::FromRef,
-    routing::{any, post},
+    routing::{any, get, post},
     Router,
 };
 use bytes::Bytes;
@@ -55,7 +55,7 @@ pub fn init_app(state: AppState) -> Router {
             "/admin/set-server-settings",
             post(routes::set_server_settings),
         )
-        .route("/admin/update-routes", post(routes::update_routes))
+        .route("/admin/update-routes", get(routes::update_routes))
         .route("/info/live", any(routes::live_info))
         .with_state(state)
 }
