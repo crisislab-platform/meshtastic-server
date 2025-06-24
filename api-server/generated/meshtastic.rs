@@ -6019,31 +6019,22 @@ pub mod crisislab_message {
     pub struct Empty {}
     #[derive(serde::Serialize)]
     #[derive(Clone, PartialEq, ::prost::Message)]
-    pub struct RoutesMap {
-        #[prost(map = "uint32, message", tag = "6")]
-        pub entries: ::std::collections::HashMap<u32, routes_map::RoutesList>,
+    pub struct NextHops {
+        #[prost(uint32, repeated, tag = "1")]
+        pub node_ids: ::prost::alloc::vec::Vec<u32>,
     }
-    /// Nested message and enum types in `RoutesMap`.
-    pub mod routes_map {
-        #[derive(serde::Serialize)]
-        #[derive(Clone, PartialEq, ::prost::Message)]
-        pub struct Route {
-            #[prost(uint32, repeated, tag = "1")]
-            pub node_ids: ::prost::alloc::vec::Vec<u32>,
-        }
-        #[derive(serde::Serialize)]
-        #[derive(Clone, PartialEq, ::prost::Message)]
-        pub struct RoutesList {
-            #[prost(message, repeated, tag = "1")]
-            pub routes: ::prost::alloc::vec::Vec<Route>,
-        }
+    #[derive(serde::Serialize)]
+    #[derive(Clone, PartialEq, ::prost::Message)]
+    pub struct NextHopsMap {
+        #[prost(map = "uint32, message", tag = "1")]
+        pub entries: ::std::collections::HashMap<u32, NextHops>,
     }
     #[derive(serde::Serialize)]
     #[derive(Clone, PartialEq, ::prost::Message)]
     pub struct LiveData {
         #[prost(uint32, tag = "1")]
         pub node_num: u32,
-        /// seconds since epoch
+        /// seconds since unix epoch
         #[prost(uint64, tag = "2")]
         pub timestamp: u64,
         #[prost(message, optional, tag = "3")]
@@ -6061,14 +6052,14 @@ pub mod crisislab_message {
         #[prost(message, tag = "2")]
         ServerSettings(ServerSettings),
         #[prost(message, tag = "3")]
-        UpdateRoutesRequest(Empty),
+        UpdateNextHopsRequest(Empty),
         /// seconds since unix epoch
         #[prost(uint64, tag = "4")]
         PingTimestamp(u64),
         #[prost(message, tag = "5")]
         SignalData(SignalData),
         #[prost(message, tag = "6")]
-        UpdatedRoutes(RoutesMap),
+        UpdatedNextHops(NextHopsMap),
         #[prost(message, tag = "7")]
         LiveData(LiveData),
     }

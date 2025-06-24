@@ -17,7 +17,8 @@ use log::{debug, error, info};
 use prost::Message;
 use serde::Deserialize;
 
-// takes a CrisislabMessage, encodes it as a protobuf and sends it to the MQTT broker
+// encodes a given CrisislabMessage and sends to the Tokio task responsible for publishing message
+// to the MQTT broker
 async fn send_command_protobuf(
     message: CrisislabMessage,
     mesh_interface: &MeshInterface,
@@ -46,15 +47,27 @@ async fn send_command_protobuf(
     }
 }
 
-#[axum::debug_handler]
+#[derive(Deserialize, Debug)]
+pub struct MeshSettingsBody {
+    broadcast_interval_seconds: Option<u32>,
+    channel_name: Option<String>,
+    ping_timeout_seconds: Option<u32>,
+}
+
 pub async fn set_mesh_settings(
     State(mesh_interface): State<MeshInterface>,
-    Json(body): Json<crisislab_message::MeshSettings>,
+    Json(body): Json<MeshSettingsBody>,
 ) -> StringOrEmptyResponse {
     info!("Setting mesh settings: {:?}", body);
 
     let crisislab_message = CrisislabMessage {
-        message: Some(crisislab_message::Message::MeshSettings(body)),
+        message: Some(crisislab_message::Message::MeshSettings(
+            crisislab_message::MeshSettings {
+                broadcast_interval_seconds: body.broadcast_interval_seconds,
+                channel_name: body.channel_name,
+                ping_timeout_seconds: body.ping_timeout_seconds,
+            },
+        )),
     };
 
     if let Err(error_message) = send_command_protobuf(crisislab_message, &mesh_interface).await {
@@ -70,7 +83,6 @@ pub struct ServerSettingsBody {
     signal_data_timeout_seconds: Option<u32>,
 }
 
-#[axum::debug_handler]
 pub async fn set_server_settings(
     State(state): State<AppState>,
     Json(body): Json<ServerSettingsBody>,
@@ -86,15 +98,14 @@ pub async fn set_server_settings(
     StatusCode::OK
 }
 
-type RoutesUpdateResponse = pathfinding::Routes<NodeId>;
+type RoutesUpdateResponse = HashMap<NodeId, Vec<NodeId>>;
 
 // /admin/update-routes
-#[axum::debug_handler]
 pub async fn update_routes(
     State(state): State<AppState>,
 ) -> FallibleJsonResponse<RoutesUpdateResponse> {
     let update_routes_message = CrisislabMessage {
-        message: Some(crisislab_message::Message::UpdateRoutesRequest(
+        message: Some(crisislab_message::Message::UpdateNextHopsRequest(
             crisislab_message::Empty {},
         )),
     };
@@ -104,6 +115,8 @@ pub async fn update_routes(
     {
         return FallibleJsonResponse::Err(StatusCode::INTERNAL_SERVER_ERROR, error_message).log();
     }
+
+    debug!("Update routes handler sent request to mesh");
 
     let mut receiver = state.mesh_interface.subscribe();
 
@@ -159,38 +172,38 @@ pub async fn update_routes(
     })
     .await;
 
-    let routes = pathfinding::compute_routes(adjacency_map, gateway_ids);
+    let next_hops_map = pathfinding::compute_next_hops_map(adjacency_map, gateway_ids);
 
-    // copy data from routes into the format expected by the protobuf
-    let routes_message = CrisislabMessage {
-        message: Some(crisislab_message::Message::UpdatedRoutes(
-            crisislab_message::RoutesMap {
-                entries: routes
-                    .iter()
-                    .map(|(start_node_id, paths)| {
+    debug!("Computed next hops map: {:?}", next_hops_map);
+
+    let next_hops_message = CrisislabMessage {
+        message: Some(crisislab_message::Message::UpdatedNextHops(
+            crisislab_message::NextHopsMap {
+                entries: next_hops_map
+                    .clone()
+                    .into_iter()
+                    .map(|(node_id, next_hops)| {
                         (
-                            start_node_id.clone(),
-                            crisislab_message::routes_map::RoutesList {
-                                routes: paths
-                                    .iter()
-                                    .map(|path| crisislab_message::routes_map::Route {
-                                        node_ids: path.clone(),
-                                    })
-                                    .collect(),
+                            node_id,
+                            crisislab_message::NextHops {
+                                node_ids: next_hops,
                             },
                         )
                     })
-                    .collect::<HashMap<_, _>>(),
+                    .collect(),
             },
         )),
     };
 
-    if let Err(error_message) = send_command_protobuf(routes_message, &state.mesh_interface).await {
+    if let Err(error_message) =
+        send_command_protobuf(next_hops_message, &state.mesh_interface).await
+    {
         return FallibleJsonResponse::Err(StatusCode::INTERNAL_SERVER_ERROR, error_message).log();
     }
 
-    // return the more nicely fomatted routes to the web client
-    FallibleJsonResponse::Ok(routes)
+    debug!("Update routes handler completed (next hops have been sent to mesh), returning next hops to client now");
+
+    FallibleJsonResponse::Ok(next_hops_map)
 }
 
 pub async fn live_info(

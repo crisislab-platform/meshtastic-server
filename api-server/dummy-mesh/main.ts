@@ -76,7 +76,7 @@ protobuf.load("../../protobufs/bundle.json", async (error, root) => {
 	if (AltSource === null) throw new Error("AltSource is null")
 
 	loop: while (true) {
-		const option = question("Enter 's' to send signal data, 'l' to send live data, or 'q' to quit: ").toLowerCase()
+		const option = question("Enter 's' to send signal data, 'l' to send live data, 'm' to listen for MQTT messages from the server, or 'q' to quit: ").toLowerCase()
 
 		switch (option) {
 			case 's':
@@ -101,6 +101,22 @@ protobuf.load("../../protobufs/bundle.json", async (error, root) => {
 					client.publish("for-server", Buffer.from(buffer))
 					await new Promise(resolve => setTimeout(resolve, 2000))
 				}
+			case 'm':
+				client.subscribe("for-mesh")
+
+				console.log("Subscribed to 'for-mesh'. Listening for messages...")
+
+				client.on('message', (topic, message) => {
+					try {
+						const decodedMessage = CrisislabMessage.decode(message)
+						// @ts-ignore
+						console.log("Received message:", CrisislabMessage.toObject(decodedMessage));
+					} catch (err) {
+						console.error("Error decoding message:", err);
+					}
+				})
+
+				break
 			case 'q':
 				client.end()
 				break loop
@@ -110,7 +126,6 @@ protobuf.load("../../protobufs/bundle.json", async (error, root) => {
 		}
 	}
 })
-
 
 const example_signal_data1 = [
 	{
@@ -126,8 +141,9 @@ const example_signal_data1 = [
 		is_gateway: false,
 		links: [
 			{ from: 1, rssi: -70, snr: 10 },
-			{ from: 4, rssi: -20, snr: 10 },
-			{ from: 5, rssi: -20, snr: 10 },
+			{ from: 3, rssi: -60, snr: 10 },
+			{ from: 4, rssi: -30, snr: 10 },
+			{ from: 5, rssi: -30, snr: 10 },
 		]
 	},
 	{
