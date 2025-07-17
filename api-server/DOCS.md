@@ -82,6 +82,16 @@ All fields are optional.
 | Improperly formatted body | 422 Unprocessable Entity | Empty body |
 | Unexpected error | 500 Internal Server Error | Error message in `error` field of JSON object |
 
+### `GET /get-server-settings`
+
+#### Body
+
+None
+
+#### Returns
+
+JSON object like the body of `/admin/set-server-settings`. Guaranteed to contain all settings.
+
 ### `GET /admin/update-routes`
 
 #### Body
