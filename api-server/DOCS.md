@@ -92,12 +92,12 @@ None
 
 ```
 {
-	<start node id>: [
+    <start node id>: [
         <best next hop>,
         <next best next hop>,
-		...,
+        ...,
         <worst next hop>
-	],
+    ],
     ...
 }
 ```
