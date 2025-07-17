@@ -80,7 +80,7 @@ protobuf.load("../../protobufs/bundle.json", async (error, root) => {
 
 		switch (option) {
 			case 's':
-				for (const packet of example_signal_data1) {
+				for (const packet of signal_data) {
 					const message = CrisislabMessage.create({
 						signal_data: packet
 					})
@@ -126,6 +126,72 @@ protobuf.load("../../protobufs/bundle.json", async (error, root) => {
 		}
 	}
 })
+
+// 1 <-> 2 : 10
+// 2 <-> 3 : 10
+// 3 <-> 4 : 10
+// 1 <-> 4 : 40
+const example_signal_data3 = [
+	{
+		to: 1,
+		is_gateway: true,
+		links: [
+			{ from: 2, rssi: -20, snr: 10 },
+			{ from: 4, rssi: -50, snr: 10 },
+		]
+	},
+	{
+		to: 2,
+		is_gateway: false,
+		links: [
+			{ from: 1, rssi: -20, snr: 10 },
+			{ from: 3, rssi: -20, snr: 10 },
+		]
+	},
+	{
+		to: 3,
+		is_gateway: false,
+		links: [
+			{ from: 2, rssi: -20, snr: 10 },
+			{ from: 4, rssi: -20, snr: 10 },
+		]
+	},
+	{
+		to: 4,
+		is_gateway: false,
+		links: [
+			{ from: 1, rssi: -50, snr: 10 },
+			{ from: 3, rssi: -20, snr: 10 },
+		]
+	}
+]
+
+const example_signal_data2 = [
+	{
+		to: 1,
+		is_gateway: true,
+		links: [
+			{ from: 2, rssi: -30, snr: 10 },
+			{ from: 3, rssi: -70, snr: 10 },
+		]
+	},
+	{
+		to: 2,
+		is_gateway: false,
+		links: [
+			{ from: 1, rssi: -30, snr: 10 },
+			{ from: 3, rssi: -20, snr: 10 },
+		]
+	},
+	{
+		to: 3,
+		is_gateway: false,
+		links: [
+			{ from: 1, rssi: -50, snr: 10 },
+			{ from: 2, rssi: -70, snr: 10 },
+		]
+	}
+]
 
 const example_signal_data1 = [
 	{
@@ -174,3 +240,4 @@ const example_signal_data1 = [
 	}
 ]
 
+const signal_data = example_signal_data2;

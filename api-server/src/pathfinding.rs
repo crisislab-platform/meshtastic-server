@@ -3,44 +3,77 @@ use std::{
     collections::{BTreeSet, HashMap},
     fmt::{Debug, Display},
     hash::Hash,
+    sync::Arc,
 };
 
 use log::error;
+use once_cell::sync::Lazy;
+use tokio::sync::Mutex;
+
+use crate::AppSettings;
 
 pub type NodeId = u32;
-type EdgeWeight = f32;
+pub type EdgeWeight = f32;
 pub type AdjacencyMap<V> = HashMap<V, HashMap<V, EdgeWeight>>;
 
-// The following two functions let you control the pathfinding.
+const MIN_RSSI: i32 = -120;
+const MAX_RSSI: i32 = 0;
+const MIN_SNR: f32 = -20.0;
+const MAX_SNR: f32 = 30.0;
+static MIN_WEIGHT: Lazy<EdgeWeight> = Lazy::new(|| compute_edge_weight(MAX_RSSI, MAX_SNR));
+static MAX_WEIGHT: Lazy<EdgeWeight> = Lazy::new(|| compute_edge_weight(MIN_RSSI, MIN_SNR));
+
+static WEIGHT_RANGE: Lazy<EdgeWeight> = Lazy::new(|| {
+    let result = *MAX_WEIGHT - *MIN_WEIGHT;
+
+    if result <= 0.0 {
+        panic!("Weight range must be greater than 0, got: {}", result);
+    }
+
+    result
+});
+
+const MAX_HOPS: usize = 10;
+
+fn proportionalise_weight(weight: EdgeWeight) -> EdgeWeight {
+    (weight / *WEIGHT_RANGE) * (MAX_HOPS as EdgeWeight)
+}
 
 // This controls the weight of each edge in the graph bassed on RSSI and SNR values.
-pub fn compute_edge_weight(_rssi: i32, snr: f32) -> EdgeWeight {
-    if snr < 0.0 {
+fn compute_edge_weight(_rssi: i32, snr: f32) -> EdgeWeight {
+    if snr < MIN_SNR {
         EdgeWeight::MAX
     } else {
         // As of writing this I'm a 17 year old who can code and I have no clue what the optimal
         // formula for this is. Some very brief reseach suggests that we may only need SNR, so for
         // now I've made SNR and weight inversely proportional (since higher SNR is better, i.e.
         // lower weight).
-        // 1.0 / (snr + 0.1)
+        // let snr_linear = 10_f32.powf(snr / 10.0);
+        // 1.0 / snr_linear
         -_rssi as f32 - snr
     }
 }
 
+pub fn compute_edge_weight_proportionalised(rssi: i32, snr: f32) -> EdgeWeight {
+    proportionalise_weight(compute_edge_weight(rssi, snr))
+}
+
 /// This determines how desirable a route is based on the total cost (sum of edge weights calculated
 /// with the above function) and the number of hops (edges) in the route.
-fn get_route_cost<V: Clone>(dijkstra_entry: &DijkstraEntry<V>) -> EdgeWeight {
-    // Currently these weights are pretty arbitrary, but reflect some of my observations so far
-    // playing around with the T-Beams.
-    const COST_WEIGHT: EdgeWeight = 0.2;
-    const HOP_WEIGHT: EdgeWeight = 0.8;
+async fn get_route_cost(
+    app_settings: Arc<Mutex<AppSettings>>,
+    cost: EdgeWeight,
+    hop_count: usize,
+) -> EdgeWeight {
+    let app_settings = app_settings.lock().await;
 
-    (dijkstra_entry.total_cost * COST_WEIGHT)
-        + (dijkstra_entry.hop_count as EdgeWeight * HOP_WEIGHT)
+    (cost * app_settings.route_cost_weight)
+        + (hop_count as EdgeWeight * app_settings.route_hops_weight)
 }
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct DijkstraEntry<V: Clone> {
+    pub total_distance: EdgeWeight,
     pub total_cost: EdgeWeight,
     pub previous: Option<V>,
     pub hop_count: usize,
@@ -48,7 +81,8 @@ pub struct DijkstraEntry<V: Clone> {
 
 type DijkstraResult<V> = HashMap<V, DijkstraEntry<V>>;
 
-pub fn dijkstra<V>(
+pub async fn dijkstra<V>(
+    app_settings: Arc<Mutex<AppSettings>>,
     adjacency_map: &AdjacencyMap<V>,
     gateway_ids: &Vec<V>,
     start: &V,
@@ -66,14 +100,17 @@ where
             continue;
         }
 
+        let initial_dist = if node_id == start {
+            0.0 as EdgeWeight
+        } else {
+            EdgeWeight::MAX
+        };
+
         result.insert(
             node_id.clone(),
             DijkstraEntry {
-                total_cost: if node_id == start {
-                    0.0 as EdgeWeight
-                } else {
-                    EdgeWeight::MAX
-                },
+                total_distance: initial_dist,
+                total_cost: initial_dist,
                 previous: None,
                 hop_count: 0,
             },
@@ -111,14 +148,26 @@ where
                 continue;
             }
 
-            let new_dist_to_neighbour = current_entry.total_cost + weight;
-            let old_dist_to_neighbour = result.get(neighbour).unwrap().total_cost;
+            let old_cost = result.get(neighbour).unwrap().total_cost;
 
-            if new_dist_to_neighbour < old_dist_to_neighbour {
+            let new_cost = get_route_cost(
+                app_settings.clone(),
+                current_entry.total_distance + weight,
+                current_entry.hop_count + 1,
+            )
+            .await;
+
+            println!(
+                "current: {:?}, neighbour: {:?} (w = {}), old_cost: {}, new_cost: {}",
+                current, neighbour, weight, old_cost, new_cost
+            );
+
+            if new_cost < old_cost {
                 result.insert(
                     neighbour.clone(),
                     DijkstraEntry {
-                        total_cost: new_dist_to_neighbour,
+                        total_distance: current_entry.total_distance + weight,
+                        total_cost: new_cost,
                         previous: Some(current.clone()),
                         hop_count: current_entry.hop_count + 1,
                     },
@@ -135,7 +184,8 @@ where
 /// go to next to reach all accessable gateway nodes in the mesh (in order from best to worst).
 /// This information alone is not enough to know the full route, but with each hop, the next node
 /// can use what it knows about the best next hops for itself to continue.
-pub fn compute_next_hops_map<V>(
+pub async fn compute_next_hops_map<V>(
+    app_settings: Arc<Mutex<AppSettings>>,
     adjacency_map: AdjacencyMap<V>,
     gateway_ids: Vec<V>,
 ) -> HashMap<V, Vec<V>>
@@ -154,28 +204,45 @@ where
             return HashMap::new();
         }
 
-        let dijkstra_table = dijkstra(&adjacency_map, &gateway_ids, gateway_id);
+        let dijkstra_table = dijkstra(
+            app_settings.clone(),
+            &adjacency_map,
+            &gateway_ids,
+            gateway_id,
+        )
+        .await;
+
+        println!(
+            "gateway_id: {}, dijkstra_table: {:?}",
+            gateway_id, dijkstra_table
+        );
 
         for (node_id, entry) in dijkstra_table.iter().to_owned() {
             if node_id == gateway_id {
                 continue;
             }
 
+            // insert vec if not already present
             if !result.contains_key(node_id) {
                 result.insert(node_id.clone(), Vec::with_capacity(1));
             }
 
+            // if the next hop entry already exists for this node, skip it
             if result.get(node_id).clone().unwrap().contains(&entry) {
                 continue;
             }
 
-            result.get_mut(node_id).unwrap().push(entry.clone());
-        }
-    }
+            let insert_position = result
+                .get(node_id)
+                .unwrap()
+                .binary_search_by(|entry| entry.total_cost.partial_cmp(&entry.total_cost).unwrap())
+                .unwrap_or_else(|e| e);
 
-    // sort each nodes list of next hops by their score
-    for (_, next_hop_entries) in result.iter_mut() {
-        next_hop_entries.sort_by(|a, b| get_route_cost(a).partial_cmp(&get_route_cost(b)).unwrap());
+            result
+                .get_mut(node_id)
+                .unwrap()
+                .insert(insert_position, entry.clone());
+        }
     }
 
     // map entries to the id of the node they point to (since we don't need any of the other

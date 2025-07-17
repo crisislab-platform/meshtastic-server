@@ -3064,8 +3064,11 @@ pub enum PortNum {
     /// ENCODING: libcotshrink
     AtakForwarder = 257,
     ///
-    /// CRISiSLab: For modules in CRISiSLab's Meshtastic Portal project.
-    CrisislabApp = 258,
+    /// CRISiSLab: Default port num for modules in CRISiSLab's Meshtastic Portal project.
+    CrisislabAppPrimary = 258,
+    ///
+    /// CRISiSLab: Secondary port for CRISiSLab for sending live data
+    CrisislabAppLive = 259,
     ///
     /// Currently we limit port nums to no higher than this value
     Max = 511,
@@ -3105,7 +3108,8 @@ impl PortNum {
             Self::PowerstressApp => "POWERSTRESS_APP",
             Self::PrivateApp => "PRIVATE_APP",
             Self::AtakForwarder => "ATAK_FORWARDER",
-            Self::CrisislabApp => "CRISISLAB_APP",
+            Self::CrisislabAppPrimary => "CRISISLAB_APP_PRIMARY",
+            Self::CrisislabAppLive => "CRISISLAB_APP_LIVE",
             Self::Max => "MAX",
         }
     }
@@ -3140,7 +3144,8 @@ impl PortNum {
             "POWERSTRESS_APP" => Some(Self::PowerstressApp),
             "PRIVATE_APP" => Some(Self::PrivateApp),
             "ATAK_FORWARDER" => Some(Self::AtakForwarder),
-            "CRISISLAB_APP" => Some(Self::CrisislabApp),
+            "CRISISLAB_APP_PRIMARY" => Some(Self::CrisislabAppPrimary),
+            "CRISISLAB_APP_LIVE" => Some(Self::CrisislabAppLive),
             "MAX" => Some(Self::Max),
             _ => None,
         }
@@ -5966,7 +5971,10 @@ impl ExcludedModules {
 #[derive(serde::Serialize)]
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CrisislabMessage {
-    #[prost(oneof = "crisislab_message::Message", tags = "1, 2, 3, 4, 5, 6, 7")]
+    #[prost(
+        oneof = "crisislab_message::Message",
+        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10"
+    )]
     pub message: ::core::option::Option<crisislab_message::Message>,
 }
 /// Nested message and enum types in `CrisislabMessage`.
@@ -6050,17 +6058,23 @@ pub mod crisislab_message {
         #[prost(message, tag = "1")]
         MeshSettings(MeshSettings),
         #[prost(message, tag = "2")]
-        ServerSettings(ServerSettings),
+        GetMeshSettingsRequest(Empty),
         #[prost(message, tag = "3")]
+        ServerSettings(ServerSettings),
+        #[prost(message, tag = "4")]
         UpdateNextHopsRequest(Empty),
         /// seconds since unix epoch
-        #[prost(uint64, tag = "4")]
+        #[prost(uint64, tag = "5")]
         PingTimestamp(u64),
-        #[prost(message, tag = "5")]
-        SignalData(SignalData),
         #[prost(message, tag = "6")]
-        UpdatedNextHops(NextHopsMap),
+        SignalData(SignalData),
         #[prost(message, tag = "7")]
+        UpdatedNextHops(NextHopsMap),
+        #[prost(message, tag = "8")]
+        StartLiveData(Empty),
+        #[prost(message, tag = "9")]
+        StopLiveData(Empty),
+        #[prost(message, tag = "10")]
         LiveData(LiveData),
     }
 }

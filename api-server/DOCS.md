@@ -20,15 +20,37 @@ All fields in the body are optional. Only the fields that are specified will be 
 }
 ```
 
-- `broadcast_interval_seconds` is the interval that nodes broadcast their info and telemetry for the server,
-- `channel_name` is the name of the channel that all mesh communication will be done on in this tool,
-- `ping_timeout_seconds` is how long a node will wait after receiving one ping before it stops listening for pings and sends the data it's gathered to the MQTT broker.
+| Field | Description |
+| ----- | ----------- |
+| `broadcast_interval_seconds` | The interval at which nodes should broadcast live telemetry to the server |
+| `channel_name` | The name of the channel that all mesh communication will be done on with this tool. Maximum 11 characters. |
+| `ping_timeout_seconds` | How long a node will wait after receiving one ping before it stops listening for pings and sends the data it's gathered. |
 
 #### Returns
 
-If ok: 200 OK with empty body.
+| Situation | Status | Response Body |
+| --------- | :----: | :-----------: |
+| Ok        | 200 OK | Empty body |
+| Improperly formatted body | 422 Unprocessable Entity | Empty body |
+| Unexpected error | 500 Internal Server Error | Error message in `error` field of JSON object |
+
+### `GET /get-mesh-settings`
+
+#### Body
+
+None
+
+#### Returns
+
+| Situation | Status | Response Body |
+| --------- | :----: | :-----------: |
+| Ok        | 200 OK | JSON object like the body of `/admin/set-mesh-settings`. See above. |
+| Timeout waiting for mesh | 504 Gateway Timeout | Error message in `error` field of JSON object |
+| Unexpected error | 500 Internal Server Error | // |
+
+If ok: 200 OK with a 
 If unexpected error: 500 Internal Server Error with error message in body.
-If improperly formatted body: 422 Unprocessable Entity with empty body.
+
 
 ### `POST /admin/set-server-settings`
 
@@ -36,17 +58,29 @@ If improperly formatted body: 422 Unprocessable Entity with empty body.
 
 ```
 {
-	signal_data_timeout_seconds: unsigned 32 bit int
+    get_settings_timeout_seconds: unsigned 64 bit int,
+    signal_data_timeout_seconds: unsigned 64 bit int,
+    route_cost_weight: 32 bit float,
+    route_hops_weight: 32 bit float
 }
 ```
 
-- `signal_data_timeout_seconds` is how long the server will wait for signal data before doing the pathfinding
-- all fields are optional
+All fields are optional.
+
+| Field | Description |
+| ----- | ----------- |
+| `get_settings_timeout_seconds` | How long the server will wait for a response from the first gateway for a mesh settings response |
+| `signal_data_timeout_seconds` | How long the server will wait for signal data from the mesh before doing the pathfinding |
+| `route_cost_weight` | The pathfinding algorithm prioritises routes based not only on their distances (i.e. sum of costs), but also the number of hops. This setting affects how much the algorithm prefers routes with a lower cost. |
+| `route_hops_weight` | Ditto but for how much it prefers routes with fewer hops. |
 
 #### Returns
 
-If ok: 200 OK with empty body.
-If improperly formatted body: 422 Unprocessable Entity.
+| Situation | Status | Response Body |
+| --------- | :----: | :-----------: |
+| Ok        | 200 OK | Empty body |
+| Improperly formatted body | 422 Unprocessable Entity | Empty body |
+| Unexpected error | 500 Internal Server Error | Error message in `error` field of JSON object |
 
 ### `GET /admin/update-routes`
 
@@ -59,14 +93,10 @@ None
 ```
 {
 	<start node id>: [
-		[
-			<first node in path excl. ourselves>
-			<second>
-			<third>
-			...
-			<gateway node id>
-		],
-		...
+        <best next hop>,
+        <next best next hop>,
+		...,
+        <worst next hop>
 	],
     ...
 }
@@ -74,7 +104,7 @@ None
 
 ### `WebSocket /info/live`
 
-Each message is a JSON serialised [CrisislabMessage.LiveInfo protobuf](https://github.com/search?q=repo%3Atobyck%2Fcrisislab-meshtastic-protobufs%20crisislab.proto%20LiveData&type=code). Please refer to the linked protobuf definition to see what this contains as it's subject to change. You may also need to refer to protobufs defined by the Meshtastic project, not us. [This website](https://buf.build/meshtastic/protobufs/docs/main:meshtastic) can be helpful for that, otherwise you can search through [our fork of Meshtastic's protobuf repository](https://github.com/tobyck/crisislab-meshtastic-protobufs).
+A live stream of telemetry from every node in the mesh. Each node will broadcast a message at the interval configured using `/admin/set-mesh-settings`. Each message is a JSON serialised [CrisislabMessage.LiveInfo protobuf](https://github.com/search?q=repo%3Atobyck%2Fcrisislab-meshtastic-protobufs%20crisislab.proto%20LiveData&type=code). Please refer to the linked protobuf definition to see what this contains as it's subject to change. You may also need to refer to protobufs defined by the Meshtastic project, not us. [This website](https://buf.build/meshtastic/protobufs/docs/main:meshtastic) can be helpful for that, otherwise you can search through [our fork of Meshtastic's protobuf repository](https://github.com/tobyck/crisislab-meshtastic-protobufs).
 
 ## Running the server
 
