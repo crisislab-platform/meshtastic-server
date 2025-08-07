@@ -6063,9 +6063,8 @@ pub mod crisislab_message {
         ServerSettings(ServerSettings),
         #[prost(message, tag = "4")]
         UpdateNextHopsRequest(Empty),
-        /// seconds since unix epoch
-        #[prost(uint64, tag = "5")]
-        PingTimestamp(u64),
+        #[prost(message, tag = "5")]
+        Ping(Empty),
         #[prost(message, tag = "6")]
         SignalData(SignalData),
         #[prost(message, tag = "7")]

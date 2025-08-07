@@ -2,7 +2,7 @@
 
 ## Overview
 
-This server is an interface between the MQTT broker (i.e. the gateway nodes in the LoRa mesh) and CRISiSLab's Meshtastic Portal. This document will explain how to use the API, and how to run the server yourself.
+This server is an interface between the MQTT broker (which is connected the gateway nodes in the LoRa mesh) and CRISiSLab's Meshtastic Portal. This document will explain how to use the API, and how to run the server yourself.
 
 ## API Endpoints
 
@@ -117,6 +117,32 @@ None
 A live stream of telemetry from every node in the mesh. Each node will broadcast a message at the interval configured using `/admin/set-mesh-settings`. Each message is a JSON serialised [CrisislabMessage.LiveInfo protobuf](https://github.com/search?q=repo%3Atobyck%2Fcrisislab-meshtastic-protobufs%20crisislab.proto%20LiveData&type=code). Please refer to the linked protobuf definition to see what this contains as it's subject to change. You may also need to refer to protobufs defined by the Meshtastic project, not us. [This website](https://buf.build/meshtastic/protobufs/docs/main:meshtastic) can be helpful for that, otherwise you can search through [our fork of Meshtastic's protobuf repository](https://github.com/tobyck/crisislab-meshtastic-protobufs).
 
 ## Running the server
+
+Clone the repository and download submodules:
+
+```
+git clone https://github.com/crisislab-platform/meshtastic-server.git
+cd meshtastic-server
+git submodule update --init
+```
+
+### MQTT
+
+Make a passwords file for Mosquitto:
+
+```
+cd mqtt-broker
+mosquitto_passwd -c passwords.txt server
+mosquitto_passwd passwords.txt gateway
+```
+
+Start the MQTT broker:
+
+```
+mosquitto -c mosquitto.conf
+```
+
+### API Server
 
 The only dependency that Cargo doesn't handle is the protobuf compiler (`protoc`). Installation will obviously depend on your OS, so refer to the [official documentation](https://protobuf.dev/installation/) for that. If you're on Nix, there's a dev shell you can use instead if you don't want to install it globally. From the `api-server` directory, run:
 
