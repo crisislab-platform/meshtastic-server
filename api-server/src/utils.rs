@@ -3,10 +3,68 @@ use std::time::Duration;
 use axum::{http::StatusCode, response::IntoResponse, Json};
 use log::error;
 use prost::Message;
+use serde::ser::{SerializeSeq, Serializer};
 use serde::Serialize;
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::proto::meshtastic::CrisislabMessage;
+
+pub struct RingBuffer<T> {
+    items: Vec<T>,
+    capacity: usize,
+    next_insertion_index: usize,
+}
+
+impl<T> RingBuffer<T> {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            items: Vec::with_capacity(capacity),
+            capacity,
+            next_insertion_index: 0,
+        }
+    }
+
+    pub fn write(&mut self, item: T) {
+        if self.items.len() < self.capacity {
+            self.items.push(item);
+        } else {
+            self.items[self.next_insertion_index] = item;
+        }
+
+        self.next_insertion_index += 1;
+        self.next_insertion_index %= self.capacity;
+    }
+}
+
+// allows the ring buffer to be converted into an iterator starting at the first/oldest item
+
+impl<'a, T> IntoIterator for &'a RingBuffer<T> {
+    type Item = &'a T;
+    type IntoIter = std::iter::Chain<std::slice::Iter<'a, T>, std::slice::Iter<'a, T>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.items[self.next_insertion_index..]
+            .iter()
+            .chain(self.items[..self.next_insertion_index].iter())
+    }
+}
+
+/// Wrapper struct that allows an iterator to serialised
+pub struct SerializableIterator<'a, T: Serialize + 'a, I: Iterator<Item = &'a T> + Clone>(pub I);
+
+impl<'a, T, I> Serialize for SerializableIterator<'a, T, I>
+where
+    I: Iterator<Item = &'a T> + Clone,
+    T: serde::ser::Serialize + 'a,
+{
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut seq = serializer.serialize_seq(None)?;
+        for item in self.0.clone() {
+            seq.serialize_element(item)?;
+        }
+        seq.end()
+    }
+}
 
 pub enum FallibleJsonResponse<T: Serialize> {
     Ok(T),

@@ -5973,7 +5973,7 @@ impl ExcludedModules {
 pub struct CrisislabMessage {
     #[prost(
         oneof = "crisislab_message::Message",
-        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10"
+        tags = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11"
     )]
     pub message: ::core::option::Option<crisislab_message::Message>,
 }
@@ -6039,7 +6039,7 @@ pub mod crisislab_message {
     }
     #[derive(serde::Serialize)]
     #[derive(Clone, PartialEq, ::prost::Message)]
-    pub struct LiveData {
+    pub struct Telemetry {
         #[prost(uint32, tag = "1")]
         pub node_num: u32,
         /// seconds since unix epoch
@@ -6070,10 +6070,12 @@ pub mod crisislab_message {
         #[prost(message, tag = "7")]
         UpdatedNextHops(NextHopsMap),
         #[prost(message, tag = "8")]
-        StartLiveData(Empty),
+        StartLiveTelemetry(Empty),
         #[prost(message, tag = "9")]
-        StopLiveData(Empty),
+        StopLiveTelemetry(Empty),
         #[prost(message, tag = "10")]
-        LiveData(LiveData),
+        LiveTelemetry(Telemetry),
+        #[prost(uint32, tag = "11")]
+        GetAdHocTelemetry(u32),
     }
 }

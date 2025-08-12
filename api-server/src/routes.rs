@@ -7,7 +7,7 @@ use std::{
 use crate::{
     pathfinding::{self, compute_edge_weight_proportionalised, AdjacencyMap, EdgeWeight, NodeId},
     proto::meshtastic::{crisislab_message, CrisislabMessage},
-    utils::{self, FallibleJsonResponse, StringOrEmptyResponse},
+    utils::{self, FallibleJsonResponse, SerializableIterator, StringOrEmptyResponse},
     AppSettings, AppState, MeshInterface,
 };
 use axum::{
@@ -291,8 +291,8 @@ pub async fn live_info(
 
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
-enum LiveInfoWebSocketPacket {
-    Data(crisislab_message::LiveData),
+enum LiveInfoWebSocketPacket<'a> {
+    Data(&'a crisislab_message::Telemetry),
     Error(String),
 }
 
@@ -306,33 +306,34 @@ async fn on_websocket_disconnect(state: &AppState) {
         debug!("Last client disconnected from live info websocket");
 
         let message = CrisislabMessage {
-            message: Some(crisislab_message::Message::StopLiveData(
+            message: Some(crisislab_message::Message::StopLiveTelemetry(
                 crisislab_message::Empty {},
             )),
         };
 
         if let Err(error_message) = send_command_protobuf(message, &state.mesh_interface).await {
             error!(
-                "Failed to send StopLiveData message to mesh: {}",
+                "Failed to send StopLiveTelemetry message to mesh: {}",
                 error_message
             );
         } else {
             debug!(
-                "Sent StopLiveData message to mesh, no more live data until a client reconnects"
+                "Sent StopLiveTelemetry message to mesh, no more live data until a client reconnects"
             );
         }
     }
 }
 
-async fn on_mesh_message_bytes(bytes: Bytes, websocket: &mut WebSocket, state: &AppState) {
+async fn on_message_from_mesh(websocket: &mut WebSocket, state: &AppState, bytes: Bytes) {
     match CrisislabMessage::decode(bytes) {
         Ok(crisislab_message) => {
-            if let Some(crisislab_message::Message::LiveData(live_data)) = crisislab_message.message
+            if let Some(crisislab_message::Message::LiveTelemetry(live_data)) =
+                crisislab_message.message
             {
                 // stringify data and send to client on websocket
                 if websocket
                     .send(axum::extract::ws::Message::Text(
-                        serde_json::to_string(&LiveInfoWebSocketPacket::Data(live_data))
+                        serde_json::to_string(&LiveInfoWebSocketPacket::Data(&live_data))
                             .expect("Failed to serialize CrisislabMessage for WS message")
                             .into(),
                     ))
@@ -342,6 +343,8 @@ async fn on_mesh_message_bytes(bytes: Bytes, websocket: &mut WebSocket, state: &
                     on_websocket_disconnect(&state).await;
                     return;
                 }
+
+                state.telemetry_cache.lock().await.write(live_data);
             }
         }
         Err(error) => {
@@ -357,7 +360,7 @@ async fn on_mesh_message_bytes(bytes: Bytes, websocket: &mut WebSocket, state: &
             if websocket
                 .send(axum::extract::ws::Message::Text(
                     serde_json::to_string(&packet)
-                        .expect("Failed to serialize error packet for WS message")
+                        .expect("Failed to serialize error packet to send to WS client")
                         .into(),
                 ))
                 .await
@@ -375,37 +378,59 @@ async fn handle_live_info_websocket(mut websocket: WebSocket, state: AppState) {
     info!("Client connected to live info websocket");
 
     if state.websocket_count.load(Ordering::SeqCst) == 0 {
-        debug!("New WS client is the only one, sending StartLiveData message to mesh");
+        debug!("New WS client is the only one, sending StartLiveTelemetry message to mesh");
 
         let message = CrisislabMessage {
-            message: Some(crisislab_message::Message::StartLiveData(
+            message: Some(crisislab_message::Message::StartLiveTelemetry(
                 crisislab_message::Empty {},
             )),
         };
 
         if let Err(error_message) = send_command_protobuf(message, &state.mesh_interface).await {
             error!(
-                "Failed to send StartLiveData message to mesh: {}",
+                "Failed to send StartLiveTelemetry message to mesh: {}",
                 error_message
             );
         } else {
-            debug!("Sent StartLiveData message to mesh, live data will be sent now");
+            debug!("Sent StartLiveTelemetry message to mesh, live data will be sent now");
         }
     }
 
     state.websocket_count.fetch_add(1, Ordering::SeqCst);
 
+    // get recent telemetry and send to client
+
+    let telemetry_cache = state.telemetry_cache.lock().await;
+
+    let serialised_cache =
+        serde_json::to_string(&SerializableIterator(telemetry_cache.into_iter()))
+            .expect("Failed to serialise telemetry cache");
+
+    drop(telemetry_cache);
+
+    if websocket
+        .send(axum::extract::ws::Message::Text(serialised_cache.into()))
+        .await
+        .is_err()
+    {
+        error!("Failed to send recent telemetry to WS client");
+        on_websocket_disconnect(&state).await;
+        return;
+    }
+
+    // main loop which alternates between forwarding telemetry from the mesh and checking for
+    // websocket disconnections
+
     loop {
         let mut mesh_receiver = state.mesh_interface.subscribe();
 
-        // NOTE for future maintainers: splitting `websocket` and using two tasks here might be
-        // better, I'm not sure.
+        // NOTE: splitting `websocket` and using two tasks here might be better but I'm not sure
         tokio::select! {
-            // if we get a message via MQTT from the mesh
+            // handler message from mesh
             Ok(bytes) = mesh_receiver.recv() => {
-                on_mesh_message_bytes(bytes, &mut websocket, &state).await;
+                on_message_from_mesh(&mut websocket, &state, bytes).await;
             }
-            // this part is only here to handle websocket disconnections
+            // handle disconnections
             websocket_message = websocket.recv() => {
                 if websocket_message.is_none() || websocket_message.unwrap().is_err() {
                     on_websocket_disconnect(&state).await;
@@ -413,5 +438,25 @@ async fn handle_live_info_websocket(mut websocket: WebSocket, state: AppState) {
                 }
             }
         }
+    }
+}
+
+#[derive(Serialize)]
+struct GetAdHocTelemetryBody {
+    node_id: u32,
+}
+
+async fn get_ad_hoc_data(
+    State(mesh_interface): State<MeshInterface>,
+    Json(body): Json<GetAdHocTelemetryBody>,
+) -> StringOrEmptyResponse {
+    let crisislab_message = CrisislabMessage {
+        message: Some(crisislab_message::Message::GetAdHocTelemetry(body.node_id)),
+    };
+
+    if let Err(error_message) = send_command_protobuf(crisislab_message, &mesh_interface).await {
+        StringOrEmptyResponse::Err(StatusCode::INTERNAL_SERVER_ERROR, error_message).log()
+    } else {
+        StringOrEmptyResponse::Ok
     }
 }

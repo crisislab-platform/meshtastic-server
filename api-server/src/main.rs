@@ -6,16 +6,17 @@ mod routes;
 mod utils;
 
 use axum::{
-    extract::FromRef,
-    routing::{any, get, post},
-    Router,
+    extract::FromRef, http::{header::{AUTHORIZATION, CONTENT_TYPE}, HeaderValue, Method}, routing::{any, get, post}, Router
 };
 use bytes::Bytes;
 use config::CONFIG;
 use pathfinding::EdgeWeight;
+use proto::meshtastic::crisislab_message::Telemetry;
 use serde::Serialize;
+use tower_http::cors::CorsLayer;
 use std::sync::{atomic::AtomicUsize, Arc};
 use tokio::sync::{broadcast, mpsc, Mutex};
+use utils::RingBuffer;
 
 /// Outer state struct to be passed to Axum handlers
 #[derive(Clone)]
@@ -23,6 +24,7 @@ pub struct AppState {
     mesh_interface: MeshInterface,
     app_settings: Arc<Mutex<AppSettings>>,
     websocket_count: Arc<AtomicUsize>,
+    telemetry_cache: Arc<Mutex<RingBuffer<Telemetry>>>,
 }
 
 /// Struct containing the two Tokio channels required for communication with the mesh
@@ -65,17 +67,32 @@ impl FromRef<AppState> for Arc<Mutex<AppSettings>> {
 }
 
 pub fn init_app(state: AppState) -> Router {
+    let allowlist = [
+        HeaderValue::from_static("http://localhost:8000"),
+        HeaderValue::from_static("http://127.0.0.1:8000"),
+    ];
+
+    let cors = CorsLayer::new()
+        .allow_origin(allowlist)
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers([CONTENT_TYPE, AUTHORIZATION])
+        .allow_credentials(true);
+
     Router::new()
+        .layer(cors)
         .route("/admin/set-mesh-settings", post(routes::set_mesh_settings))
         .route(
             "/admin/set-server-settings",
             post(routes::set_server_settings),
         )
         .route("/get-mesh-settings", get(routes::get_mesh_settings))
-        .route(
-            "/get-server-settings",
-            get(routes::get_server_settings),
-        )
+        .route("/get-server-settings", get(routes::get_server_settings))
         .route("/admin/update-routes", get(routes::update_routes))
         .route("/info/live", any(routes::live_info))
         .with_state(state)
@@ -87,6 +104,7 @@ async fn main() {
     env_logger::init();
 
     let mesh_interface = mqtt::init_client().await;
+
     let app_state = AppState {
         mesh_interface,
         app_settings: Arc::new(Mutex::new(AppSettings {
@@ -96,7 +114,9 @@ async fn main() {
             route_hops_weight: CONFIG.default_route_hops_weight,
         })),
         websocket_count: Arc::new(AtomicUsize::new(0)),
+        telemetry_cache: Arc::new(Mutex::new(RingBuffer::new(CONFIG.telemetry_cache_capacity))),
     };
+
     let app = init_app(app_state);
 
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", CONFIG.server_port))

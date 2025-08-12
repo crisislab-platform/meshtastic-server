@@ -17,6 +17,7 @@ pub struct Config {
     pub default_signal_data_timeout_seconds: u64,
     pub default_route_cost_weight: EdgeWeight,
     pub default_route_hops_weight: EdgeWeight,
+    pub telemetry_cache_capacity: usize,
 }
 
 fn get_env_var(name: &str) -> String {
@@ -60,4 +61,7 @@ pub static CONFIG: Lazy<Config> = Lazy::new(|| Config {
     default_route_hops_weight: get_env_var("DEFAULT_ROUTE_HOPS_WEIGHT")
         .parse::<EdgeWeight>()
         .expect("DEFAULT_ROUTE_HOPS_WEIGHT must be an EdgeWeight"),
+    telemetry_cache_capacity: get_env_var("TELEMETRY_CACHE_CAPACITY")
+        .parse::<usize>()
+        .expect("TELEMETRY_CACHE_CAPACITY must be a usize"),
 });
