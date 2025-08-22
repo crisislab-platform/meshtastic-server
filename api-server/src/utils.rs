@@ -59,9 +59,11 @@ where
 {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut seq = serializer.serialize_seq(None)?;
+
         for item in self.0.clone() {
             seq.serialize_element(item)?;
         }
+
         seq.end()
     }
 }

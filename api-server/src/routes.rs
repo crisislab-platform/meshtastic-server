@@ -6,8 +6,11 @@ use std::{
 
 use crate::{
     pathfinding::{self, compute_edge_weight_proportionalised, AdjacencyMap, EdgeWeight, NodeId},
-    proto::meshtastic::{crisislab_message, CrisislabMessage},
-    utils::{self, FallibleJsonResponse, SerializableIterator, StringOrEmptyResponse},
+    proto::meshtastic::{
+        crisislab_message::{self, Telemetry},
+        CrisislabMessage,
+    },
+    utils::{self, FallibleJsonResponse, RingBuffer, SerializableIterator, StringOrEmptyResponse},
     AppSettings, AppState, MeshInterface,
 };
 use axum::{
@@ -187,6 +190,18 @@ type RoutesUpdateResponse = HashMap<NodeId, Vec<NodeId>>;
 pub async fn update_routes(
     State(state): State<AppState>,
 ) -> FallibleJsonResponse<RoutesUpdateResponse> {
+    let _guard = match state.updating_routes_lock.try_lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            debug!("Update routes handler: already updating routes, returning conflict response");
+
+            return FallibleJsonResponse::Err(
+                StatusCode::CONFLICT,
+                "Next hops update has already been requested by another client".to_owned(),
+            );
+        }
+    };
+
     let update_routes_message = CrisislabMessage {
         message: Some(crisislab_message::Message::UpdateNextHopsRequest(
             crisislab_message::Empty {},
@@ -291,8 +306,11 @@ pub async fn live_info(
 
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
-enum LiveInfoWebSocketPacket<'a> {
-    Data(&'a crisislab_message::Telemetry),
+enum TelemetryWSPacket<'a> {
+    Telemetry(&'a Telemetry),
+    Cache(
+        SerializableIterator<'a, Telemetry, <&'a RingBuffer<Telemetry> as IntoIterator>::IntoIter>,
+    ),
     Error(String),
 }
 
@@ -333,7 +351,7 @@ async fn on_message_from_mesh(websocket: &mut WebSocket, state: &AppState, bytes
                 // stringify data and send to client on websocket
                 if websocket
                     .send(axum::extract::ws::Message::Text(
-                        serde_json::to_string(&LiveInfoWebSocketPacket::Data(&live_data))
+                        serde_json::to_string(&TelemetryWSPacket::Telemetry(&live_data))
                             .expect("Failed to serialize CrisislabMessage for WS message")
                             .into(),
                     ))
@@ -352,10 +370,8 @@ async fn on_message_from_mesh(websocket: &mut WebSocket, state: &AppState, bytes
 
             // notify client of decoding error
 
-            let packet = LiveInfoWebSocketPacket::Error(format!(
-                "Failed to decode CrisislabMessage: {:?}",
-                error
-            ));
+            let packet =
+                TelemetryWSPacket::Error(format!("Failed to decode CrisislabMessage: {:?}", error));
 
             if websocket
                 .send(axum::extract::ws::Message::Text(
@@ -402,9 +418,10 @@ async fn handle_live_info_websocket(mut websocket: WebSocket, state: AppState) {
 
     let telemetry_cache = state.telemetry_cache.lock().await;
 
-    let serialised_cache =
-        serde_json::to_string(&SerializableIterator(telemetry_cache.into_iter()))
-            .expect("Failed to serialise telemetry cache");
+    let serialised_cache = serde_json::to_string(&TelemetryWSPacket::Cache(SerializableIterator(
+        telemetry_cache.into_iter(),
+    )))
+    .expect("Failed to serialise telemetry cache");
 
     drop(telemetry_cache);
 
@@ -441,15 +458,19 @@ async fn handle_live_info_websocket(mut websocket: WebSocket, state: AppState) {
     }
 }
 
-#[derive(Serialize)]
-struct GetAdHocTelemetryBody {
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GetAdHocTelemetryBody {
     node_id: u32,
 }
 
-async fn get_ad_hoc_data(
+#[axum::debug_handler]
+pub async fn get_ad_hoc_data(
     State(mesh_interface): State<MeshInterface>,
     Json(body): Json<GetAdHocTelemetryBody>,
 ) -> StringOrEmptyResponse {
+    info!("Requesting ad hoc telemetry from node {}", body.node_id);
+
     let crisislab_message = CrisislabMessage {
         message: Some(crisislab_message::Message::GetAdHocTelemetry(body.node_id)),
     };

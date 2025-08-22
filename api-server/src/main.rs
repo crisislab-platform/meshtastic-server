@@ -23,6 +23,7 @@ use utils::RingBuffer;
 pub struct AppState {
     mesh_interface: MeshInterface,
     app_settings: Arc<Mutex<AppSettings>>,
+    updating_routes_lock: Arc<Mutex<()>>,
     websocket_count: Arc<AtomicUsize>,
     telemetry_cache: Arc<Mutex<RingBuffer<Telemetry>>>,
 }
@@ -67,6 +68,7 @@ impl FromRef<AppState> for Arc<Mutex<AppSettings>> {
 }
 
 pub fn init_app(state: AppState) -> Router {
+    // temporary cors fix for testing on Migada's laptop
     let allowlist = [
         HeaderValue::from_static("http://localhost:8000"),
         HeaderValue::from_static("http://127.0.0.1:8000"),
@@ -85,7 +87,6 @@ pub fn init_app(state: AppState) -> Router {
         .allow_credentials(true);
 
     Router::new()
-        .layer(cors)
         .route("/admin/set-mesh-settings", post(routes::set_mesh_settings))
         .route(
             "/admin/set-server-settings",
@@ -95,6 +96,8 @@ pub fn init_app(state: AppState) -> Router {
         .route("/get-server-settings", get(routes::get_server_settings))
         .route("/admin/update-routes", get(routes::update_routes))
         .route("/info/live", any(routes::live_info))
+        .route("/info/ad-hoc", get(routes::get_ad_hoc_data))
+        .layer(cors)
         .with_state(state)
 }
 
@@ -113,6 +116,7 @@ async fn main() {
             route_cost_weight: CONFIG.default_route_cost_weight,
             route_hops_weight: CONFIG.default_route_hops_weight,
         })),
+        updating_routes_lock: Arc::new(Mutex::new(())),
         websocket_count: Arc::new(AtomicUsize::new(0)),
         telemetry_cache: Arc::new(Mutex::new(RingBuffer::new(CONFIG.telemetry_cache_capacity))),
     };
