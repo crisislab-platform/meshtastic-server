@@ -6,16 +6,22 @@ mod routes;
 mod utils;
 
 use axum::{
-    extract::FromRef, http::{header::{AUTHORIZATION, CONTENT_TYPE}, HeaderValue, Method}, routing::{any, get, post}, Router
+    extract::FromRef,
+    http::{
+        header::{AUTHORIZATION, CONTENT_TYPE},
+        HeaderValue, Method,
+    },
+    routing::{any, get, post},
+    Router,
 };
 use bytes::Bytes;
 use config::CONFIG;
 use pathfinding::EdgeWeight;
 use proto::meshtastic::crisislab_message::Telemetry;
 use serde::Serialize;
-use tower_http::cors::CorsLayer;
 use std::sync::{atomic::AtomicUsize, Arc};
 use tokio::sync::{broadcast, mpsc, Mutex};
+use tower_http::cors::CorsLayer;
 use utils::RingBuffer;
 
 /// Outer state struct to be passed to Axum handlers
@@ -26,6 +32,12 @@ pub struct AppState {
     updating_routes_lock: Arc<Mutex<()>>,
     websocket_count: Arc<AtomicUsize>,
     telemetry_cache: Arc<Mutex<RingBuffer<Telemetry>>>,
+    live_status: Arc<Mutex<LiveStatus>>,
+}
+
+#[derive(Serialize)]
+pub struct LiveStatus {
+    is_live: bool,
 }
 
 /// Struct containing the two Tokio channels required for communication with the mesh
@@ -95,7 +107,9 @@ pub fn init_app(state: AppState) -> Router {
         .route("/get-mesh-settings", get(routes::get_mesh_settings))
         .route("/get-server-settings", get(routes::get_server_settings))
         .route("/admin/update-routes", get(routes::update_routes))
-        .route("/info/live", any(routes::live_info))
+        .route("/telemetry/socket", any(routes::live_info))
+        .route("/telemetry/start-live", any(routes::start_live_telemetry))
+        .route("/telemetry/stop-live", any(routes::stop_live_telemetry))
         .route("/info/ad-hoc", get(routes::get_ad_hoc_data))
         .layer(cors)
         .with_state(state)
@@ -119,6 +133,7 @@ async fn main() {
         updating_routes_lock: Arc::new(Mutex::new(())),
         websocket_count: Arc::new(AtomicUsize::new(0)),
         telemetry_cache: Arc::new(Mutex::new(RingBuffer::new(CONFIG.telemetry_cache_capacity))),
+        live_status: Arc::new(Mutex::new(LiveStatus { is_live: false })),
     };
 
     let app = init_app(app_state);
