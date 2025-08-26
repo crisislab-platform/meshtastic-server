@@ -35,7 +35,7 @@ pub struct AppState {
     live_status: Arc<Mutex<LiveStatus>>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone, Copy)]
 pub struct LiveStatus {
     is_live: bool,
 }
@@ -110,6 +110,7 @@ pub fn init_app(state: AppState) -> Router {
         .route("/telemetry/socket", any(routes::live_info))
         .route("/telemetry/start-live", any(routes::start_live_telemetry))
         .route("/telemetry/stop-live", any(routes::stop_live_telemetry))
+        .route("/telemetry/live-status", get(routes::get_is_live))
         .route("/info/ad-hoc", get(routes::get_ad_hoc_data))
         .layer(cors)
         .with_state(state)

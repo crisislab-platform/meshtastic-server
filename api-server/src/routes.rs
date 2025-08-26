@@ -11,7 +11,7 @@ use crate::{
         CrisislabMessage,
     },
     utils::{self, FallibleJsonResponse, RingBuffer, SerializableIterator, StringOrEmptyResponse},
-    AppSettings, AppState, MeshInterface,
+    AppSettings, AppState, LiveStatus, MeshInterface,
 };
 use axum::{
     extract::{ws::WebSocket, State, WebSocketUpgrade},
@@ -408,6 +408,7 @@ pub async fn start_live_telemetry(State(state): State<AppState>) -> StringOrEmpt
             return StringOrEmptyResponse::Err(StatusCode::INTERNAL_SERVER_ERROR, error_message);
         } else {
             debug!("Sent StartLiveTelemetry message to mesh, live data will be sent now");
+            set_is_live(&state, true).await;
             return StringOrEmptyResponse::Ok;
         }
     }
@@ -436,8 +437,19 @@ pub async fn stop_live_telemetry(State(state): State<AppState>) -> StringOrEmpty
         debug!(
             "Sent StopLiveTelemetry message to mesh, no more live data until a client reconnects"
         );
+        set_is_live(&state, false).await;
         return StringOrEmptyResponse::Ok;
     }
+}
+
+pub async fn get_is_live(State(state): State<AppState>) -> Json<LiveStatus> {
+    Json(state.live_status.lock().await.clone())
+}
+
+async fn set_is_live(state: &AppState, is_live: bool) {
+    let live_arc: Arc<Mutex<LiveStatus>> = state.live_status.clone();
+    let mut live = live_arc.lock().await;
+    live.is_live = is_live;
 }
 
 async fn handle_live_info_websocket(mut websocket: WebSocket, state: AppState) {
