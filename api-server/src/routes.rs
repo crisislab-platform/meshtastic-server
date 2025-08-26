@@ -318,28 +318,6 @@ async fn on_websocket_disconnect(state: &AppState) {
     debug!("Client closed WS connection");
 
     state.websocket_count.fetch_sub(1, Ordering::SeqCst);
-
-    // if there are no clients left, tell the mesh to stop sending live data
-    //if state.websocket_count.load(Ordering::SeqCst) == 0 {
-    //    debug!("Last client disconnected from live info websocket");
-
-    //    let message = CrisislabMessage {
-    //        message: Some(crisislab_message::Message::StopLiveTelemetry(
-    //            crisislab_message::Empty {},
-    //        )),
-    //    };
-
-    //    if let Err(error_message) = send_command_protobuf(message, &state.mesh_interface).await {
-    //        error!(
-    //            "Failed to send StopLiveTelemetry message to mesh: {}",
-    //            error_message
-    //        );
-    //    } else {
-    //        debug!(
-    //            "Sent StopLiveTelemetry message to mesh, no more live data until a client reconnects"
-    //        );
-    //    }
-    //}
 }
 
 async fn on_message_from_mesh(websocket: &mut WebSocket, state: &AppState, bytes: Bytes) {
@@ -391,8 +369,8 @@ async fn on_message_from_mesh(websocket: &mut WebSocket, state: &AppState, bytes
 }
 
 pub async fn start_live_telemetry(State(state): State<AppState>) -> StringOrEmptyResponse {
-    if state.websocket_count.load(Ordering::SeqCst) == 0 {
-        debug!("New WS client is the only one, sending StartLiveTelemetry message to mesh");
+    if state.websocket_count.load(Ordering::SeqCst) > 0 {
+        debug!("Sending StartLiveTelemetry message to mesh");
 
         let message = CrisislabMessage {
             message: Some(crisislab_message::Message::StartLiveTelemetry(
@@ -407,7 +385,7 @@ pub async fn start_live_telemetry(State(state): State<AppState>) -> StringOrEmpt
             );
             return StringOrEmptyResponse::Err(StatusCode::INTERNAL_SERVER_ERROR, error_message);
         } else {
-            debug!("Sent StartLiveTelemetry message to mesh, live data will be sent now");
+            debug!("Sent StartLiveTelemetry message to mesh");
             set_is_live(&state, true).await;
             return StringOrEmptyResponse::Ok;
         }
@@ -434,16 +412,14 @@ pub async fn stop_live_telemetry(State(state): State<AppState>) -> StringOrEmpty
         );
         return StringOrEmptyResponse::Err(StatusCode::INTERNAL_SERVER_ERROR, error_message);
     } else {
-        debug!(
-            "Sent StopLiveTelemetry message to mesh, no more live data until a client reconnects"
-        );
+        debug!("Sent StopLiveTelemetry message to mesh");
         set_is_live(&state, false).await;
         return StringOrEmptyResponse::Ok;
     }
 }
 
 pub async fn get_is_live(State(state): State<AppState>) -> Json<LiveStatus> {
-    Json(state.live_status.lock().await.clone())
+    Json(state.live_status.lock().await.clone()) //sends LiveStatus to frontend
 }
 
 async fn set_is_live(state: &AppState, is_live: bool) {
@@ -454,25 +430,6 @@ async fn set_is_live(state: &AppState, is_live: bool) {
 
 async fn handle_live_info_websocket(mut websocket: WebSocket, state: AppState) {
     info!("Client connected to live info websocket");
-
-    //if state.websocket_count.load(Ordering::SeqCst) == 0 {
-    //    debug!("New WS client is the only one, sending StartLiveTelemetry message to mesh");
-
-    //    let message = CrisislabMessage {
-    //        message: Some(crisislab_message::Message::StartLiveTelemetry(
-    //            crisislab_message::Empty {},
-    //        )),
-    //    };
-
-    //    if let Err(error_message) = send_command_protobuf(message, &state.mesh_interface).await {
-    //        error!(
-    //            "Failed to send StartLiveTelemetry message to mesh: {}",
-    //            error_message
-    //        );
-    //    } else {
-    //        debug!("Sent StartLiveTelemetry message to mesh, live data will be sent now");
-    //    }
-    //}
 
     state.websocket_count.fetch_add(1, Ordering::SeqCst);
 
