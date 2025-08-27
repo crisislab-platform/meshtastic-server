@@ -369,31 +369,24 @@ async fn on_message_from_mesh(websocket: &mut WebSocket, state: &AppState, bytes
 }
 
 pub async fn start_live_telemetry(State(state): State<AppState>) -> StringOrEmptyResponse {
-    if state.websocket_count.load(Ordering::SeqCst) > 0 {
-        debug!("Sending StartLiveTelemetry message to mesh");
+    debug!("Sending StartLiveTelemetry message to mesh");
 
-        let message = CrisislabMessage {
-            message: Some(crisislab_message::Message::StartLiveTelemetry(
-                crisislab_message::Empty {},
-            )),
-        };
+    let message = CrisislabMessage {
+        message: Some(crisislab_message::Message::StartLiveTelemetry(
+            crisislab_message::Empty {},
+        )),
+    };
 
-        if let Err(error_message) = send_command_protobuf(message, &state.mesh_interface).await {
-            error!(
-                "Failed to send StartLiveTelemetry message to mesh: {}",
-                error_message
-            );
-            return StringOrEmptyResponse::Err(StatusCode::INTERNAL_SERVER_ERROR, error_message);
-        } else {
-            debug!("Sent StartLiveTelemetry message to mesh");
-            set_is_live(&state, true).await;
-            return StringOrEmptyResponse::Ok;
-        }
+    if let Err(error_message) = send_command_protobuf(message, &state.mesh_interface).await {
+        error!(
+            "Failed to send StartLiveTelemetry message to mesh: {}",
+            error_message
+        );
+        return StringOrEmptyResponse::Err(StatusCode::INTERNAL_SERVER_ERROR, error_message);
     }
-    return StringOrEmptyResponse::Err(
-        StatusCode::TOO_EARLY,
-        String::from("No point of starting the telemetry now. No websocket clients"),
-    );
+    debug!("Sent StartLiveTelemetry message to mesh");
+    set_is_live(&state, true).await;
+    return StringOrEmptyResponse::Ok;
 }
 
 pub async fn stop_live_telemetry(State(state): State<AppState>) -> StringOrEmptyResponse {
@@ -406,11 +399,7 @@ pub async fn stop_live_telemetry(State(state): State<AppState>) -> StringOrEmpty
     };
 
     if let Err(error_message) = send_command_protobuf(message, &state.mesh_interface).await {
-        error!(
-            "Failed to send StopLiveTelemetry message to mesh: {}",
-            error_message
-        );
-        return StringOrEmptyResponse::Err(StatusCode::INTERNAL_SERVER_ERROR, error_message);
+        return StringOrEmptyResponse::Err(StatusCode::INTERNAL_SERVER_ERROR, error_message).log();
     } else {
         debug!("Sent StopLiveTelemetry message to mesh");
         set_is_live(&state, false).await;
