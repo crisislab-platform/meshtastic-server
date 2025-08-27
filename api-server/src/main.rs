@@ -6,16 +6,22 @@ mod routes;
 mod utils;
 
 use axum::{
-    extract::FromRef, http::{header::{AUTHORIZATION, CONTENT_TYPE}, HeaderValue, Method}, routing::{any, get, post}, Router
+    extract::FromRef,
+    http::{
+        header::{AUTHORIZATION, CONTENT_TYPE},
+        HeaderValue, Method,
+    },
+    routing::{any, get, post},
+    Router,
 };
 use bytes::Bytes;
 use config::CONFIG;
 use pathfinding::EdgeWeight;
 use proto::meshtastic::crisislab_message::Telemetry;
 use serde::Serialize;
-use tower_http::cors::CorsLayer;
 use std::sync::{atomic::AtomicUsize, Arc};
 use tokio::sync::{broadcast, mpsc, Mutex};
+use tower_http::cors::CorsLayer;
 use utils::RingBuffer;
 
 /// Outer state struct to be passed to Axum handlers
@@ -59,6 +65,7 @@ pub struct AppSettings {
     signal_data_timeout_seconds: u64,
     route_cost_weight: EdgeWeight,
     route_hops_weight: EdgeWeight,
+    ad_hoc_telemetry_timeout_seconds: u64,
 }
 
 impl FromRef<AppState> for Arc<Mutex<AppSettings>> {
@@ -115,6 +122,7 @@ async fn main() {
             signal_data_timeout_seconds: CONFIG.default_signal_data_timeout_seconds,
             route_cost_weight: CONFIG.default_route_cost_weight,
             route_hops_weight: CONFIG.default_route_hops_weight,
+            ad_hoc_telemetry_timeout_seconds: CONFIG.default_ad_hoc_telemetry_timeout_seconds,
         })),
         updating_routes_lock: Arc::new(Mutex::new(())),
         websocket_count: Arc::new(AtomicUsize::new(0)),

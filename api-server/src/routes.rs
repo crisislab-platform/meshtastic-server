@@ -466,7 +466,7 @@ pub struct GetAdHocTelemetryBody {
 
 #[axum::debug_handler]
 pub async fn get_ad_hoc_data(
-    State(mesh_interface): State<MeshInterface>,
+    State(state): State<AppState>,
     Json(body): Json<GetAdHocTelemetryBody>,
 ) -> StringOrEmptyResponse {
     info!("Requesting ad hoc telemetry from node {}", body.node_id);
@@ -480,4 +480,12 @@ pub async fn get_ad_hoc_data(
     } else {
         StringOrEmptyResponse::Ok
     }
+
+    let app_settings = state.app_settings.lock().await;
+
+    await_mesh_response(
+        &mut mesh_interface.subscribe(),
+        Duration::from_secs(app_settings.ad_hoc_telemetry_timeout_seconds),
+        |message| {},
+    );
 }
