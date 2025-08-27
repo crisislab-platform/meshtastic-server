@@ -1,13 +1,15 @@
+use bytes::BytesMut;
 use std::time::Duration;
 
 use axum::{http::StatusCode, response::IntoResponse, Json};
-use log::error;
+use log::{debug, error};
 use prost::Message;
 use serde::ser::{SerializeSeq, Serializer};
 use serde::Serialize;
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::proto::meshtastic::CrisislabMessage;
+use crate::MeshInterface;
 
 pub struct RingBuffer<T> {
     items: Vec<T>,
@@ -168,4 +170,34 @@ pub async fn await_mesh_response<T>(
         "Timed out waiting for mesh response after {} seconds",
         timeout_duration.as_secs()
     )))
+}
+
+/// Encodes a given CrisislabMessage and sends it to the Tokio task responsible for publishing
+/// messages to the MQTT broker. May return an `Err(String)` if encoding or sending fails.
+pub async fn send_command_protobuf(
+    message: CrisislabMessage,
+    mesh_interface: &MeshInterface,
+) -> Result<(), String> {
+    // buffer for the encoded protobuf
+    let mut buffer = BytesMut::with_capacity(message.encoded_len());
+
+    if let Err(error) = message.encode(&mut buffer) {
+        return Err(format!("Failed to encode command as protobuf: {:?}", error));
+    }
+
+    if let Err(error) = mesh_interface
+        // the Tokio channel sender which goes to the publisher task
+        .clone_sender_to_publisher()
+        // that channel expects a non-mutable Bytes buffer hence .freeze()
+        .send(buffer.freeze())
+        .await
+    {
+        Err(format!(
+            "Failed to send command to MQTT publisher task: {:?}",
+            error
+        ))
+    } else {
+        debug!("send_command_protobuf: sent message to MQTT publisher task");
+        Ok(())
+    }
 }

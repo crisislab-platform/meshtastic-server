@@ -19,7 +19,7 @@ use config::CONFIG;
 use pathfinding::EdgeWeight;
 use proto::meshtastic::crisislab_message::Telemetry;
 use serde::Serialize;
-use std::sync::{atomic::AtomicUsize, Arc};
+use std::sync::{atomic::AtomicBool, Arc};
 use tokio::sync::{broadcast, mpsc, Mutex};
 use tower_http::cors::CorsLayer;
 use utils::RingBuffer;
@@ -30,14 +30,8 @@ pub struct AppState {
     mesh_interface: MeshInterface,
     app_settings: Arc<Mutex<AppSettings>>,
     updating_routes_lock: Arc<Mutex<()>>,
-    websocket_count: Arc<AtomicUsize>,
     telemetry_cache: Arc<Mutex<RingBuffer<Telemetry>>>,
-    live_status: Arc<Mutex<LiveStatus>>,
-}
-
-#[derive(Serialize, Clone, Copy)]
-pub struct LiveStatus {
-    is_live: bool,
+    live_telemetry_is_enabled: Arc<AtomicBool>,
 }
 
 /// Struct containing the two Tokio channels required for communication with the mesh
@@ -107,11 +101,11 @@ pub fn init_app(state: AppState) -> Router {
         .route("/get-mesh-settings", get(routes::get_mesh_settings))
         .route("/get-server-settings", get(routes::get_server_settings))
         .route("/admin/update-routes", get(routes::update_routes))
-        .route("/telemetry/socket", any(routes::live_info))
+        .route("/telemetry/socket", any(routes::live_telemetry))
         .route("/telemetry/start-live", any(routes::start_live_telemetry))
         .route("/telemetry/stop-live", any(routes::stop_live_telemetry))
-        .route("/telemetry/live-status", get(routes::get_is_live))
-        .route("/info/ad-hoc", get(routes::get_ad_hoc_data))
+        .route("/telemetry/live-status", get(routes::get_live_status))
+        .route("/telemetry/ad-hoc", get(routes::get_ad_hoc_telemetry))
         .layer(cors)
         .with_state(state)
 }
@@ -132,9 +126,8 @@ async fn main() {
             route_hops_weight: CONFIG.default_route_hops_weight,
         })),
         updating_routes_lock: Arc::new(Mutex::new(())),
-        websocket_count: Arc::new(AtomicUsize::new(0)),
         telemetry_cache: Arc::new(Mutex::new(RingBuffer::new(CONFIG.telemetry_cache_capacity))),
-        live_status: Arc::new(Mutex::new(LiveStatus { is_live: false })),
+        live_telemetry_is_enabled: Arc::new(AtomicBool::new(false)),
     };
 
     let app = init_app(app_state);
