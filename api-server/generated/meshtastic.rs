@@ -6074,7 +6074,7 @@ pub mod crisislab_message {
         #[prost(message, tag = "9")]
         StopLiveTelemetry(Empty),
         #[prost(message, tag = "10")]
-        LiveTelemetry(Telemetry),
+        Telemetry(Telemetry),
         #[prost(uint32, tag = "11")]
         GetAdHocTelemetry(u32),
     }

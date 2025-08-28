@@ -11,8 +11,8 @@ use crate::{
         CrisislabMessage,
     },
     utils::{
-        self, send_command_protobuf, FallibleJsonResponse, RingBuffer, SerializableIterator,
-        StringOrEmptyResponse,
+        self, await_mesh_response, send_command_protobuf, FallibleJsonResponse, RingBuffer,
+        SerializableIterator, StringOrEmptyResponse,
     },
     AppSettings, AppState, MeshInterface,
 };
@@ -270,70 +270,6 @@ pub async fn update_routes(
     FallibleJsonResponse::Ok(next_hops_map)
 }
 
-pub async fn live_telemetry(
-    websocket_upgrade: WebSocketUpgrade,
-    State(state): State<AppState>,
-) -> Response {
-    websocket_upgrade.on_upgrade(|socket| handle_live_telemetry_websocket(socket, state))
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "snake_case")]
-enum TelemetryWSPacket<'a> {
-    Telemetry(&'a Telemetry),
-    Cache(
-        SerializableIterator<'a, Telemetry, <&'a RingBuffer<Telemetry> as IntoIterator>::IntoIter>,
-    ),
-    Error(String),
-}
-
-async fn on_message_from_mesh(websocket: &mut WebSocket, state: &AppState, bytes: Bytes) {
-    match CrisislabMessage::decode(bytes) {
-        Ok(crisislab_message) => {
-            if let Some(crisislab_message::Message::LiveTelemetry(live_data)) =
-                crisislab_message.message
-            {
-                // stringify data and send to client on websocket
-                if websocket
-                    .send(axum::extract::ws::Message::Text(
-                        serde_json::to_string(&TelemetryWSPacket::Telemetry(&live_data))
-                            .expect("Failed to serialize CrisislabMessage for WS message")
-                            .into(),
-                    ))
-                    .await
-                    .is_err()
-                {
-                    debug!("Client disconnected from websocket");
-                    return;
-                }
-
-                state.telemetry_cache.lock().await.write(live_data);
-            }
-        }
-        Err(error) => {
-            error!("Failed to decode CrisislabMessage: {:?}", error);
-
-            // notify client of decoding error
-
-            let packet =
-                TelemetryWSPacket::Error(format!("Failed to decode CrisislabMessage: {:?}", error));
-
-            if websocket
-                .send(axum::extract::ws::Message::Text(
-                    serde_json::to_string(&packet)
-                        .expect("Failed to serialize error packet to send to WS client")
-                        .into(),
-                ))
-                .await
-                .is_err()
-            {
-                error!("Failed to inform WS client of decoding error. Disconnecting.");
-                return;
-            }
-        }
-    }
-}
-
 pub async fn start_live_telemetry(State(state): State<AppState>) -> StringOrEmptyResponse {
     debug!("Received request to start live telemetry");
 
@@ -389,6 +325,70 @@ pub async fn get_live_status(State(state): State<AppState>) -> Json<LiveStatusRe
     })
 }
 
+pub async fn live_telemetry(
+    websocket_upgrade: WebSocketUpgrade,
+    State(state): State<AppState>,
+) -> Response {
+    websocket_upgrade.on_upgrade(|socket| handle_live_telemetry_websocket(socket, state))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+enum TelemetryWSPacket<'a> {
+    Telemetry(&'a Telemetry),
+    Cache(
+        SerializableIterator<'a, Telemetry, <&'a RingBuffer<Telemetry> as IntoIterator>::IntoIter>,
+    ),
+    Error(String),
+}
+
+async fn on_message_from_mesh(websocket: &mut WebSocket, state: &AppState, bytes: Bytes) {
+    match CrisislabMessage::decode(bytes) {
+        Ok(crisislab_message) => {
+            if let Some(crisislab_message::Message::Telemetry(live_data)) =
+                crisislab_message.message
+            {
+                // stringify data and send to client on websocket
+                if websocket
+                    .send(axum::extract::ws::Message::Text(
+                        serde_json::to_string(&TelemetryWSPacket::Telemetry(&live_data))
+                            .expect("Failed to serialize CrisislabMessage for WS message")
+                            .into(),
+                    ))
+                    .await
+                    .is_err()
+                {
+                    debug!("Client disconnected from websocket");
+                    return;
+                }
+
+                state.telemetry_cache.lock().await.write(live_data);
+            }
+        }
+        Err(error) => {
+            error!("Failed to decode CrisislabMessage: {:?}", error);
+
+            // notify client of decoding error
+
+            let packet =
+                TelemetryWSPacket::Error(format!("Failed to decode CrisislabMessage: {:?}", error));
+
+            if websocket
+                .send(axum::extract::ws::Message::Text(
+                    serde_json::to_string(&packet)
+                        .expect("Failed to serialize error packet to send to WS client")
+                        .into(),
+                ))
+                .await
+                .is_err()
+            {
+                error!("Failed to inform WS client of decoding error. Disconnecting.");
+                return;
+            }
+        }
+    }
+}
+
 async fn handle_live_telemetry_websocket(mut websocket: WebSocket, state: AppState) {
     info!("Client connected to live info websocket");
 
@@ -441,9 +441,8 @@ pub struct GetAdHocTelemetryBody {
     node_id: u32,
 }
 
-#[axum::debug_handler]
 pub async fn get_ad_hoc_telemetry(
-    State(mesh_interface): State<MeshInterface>,
+    State(state): State<AppState>,
     Json(body): Json<GetAdHocTelemetryBody>,
 ) -> StringOrEmptyResponse {
     info!("Requesting ad hoc telemetry from node {}", body.node_id);
@@ -452,9 +451,35 @@ pub async fn get_ad_hoc_telemetry(
         message: Some(crisislab_message::Message::GetAdHocTelemetry(body.node_id)),
     };
 
-    if let Err(error_message) = send_command_protobuf(crisislab_message, &mesh_interface).await {
-        StringOrEmptyResponse::Err(StatusCode::INTERNAL_SERVER_ERROR, error_message).log()
-    } else {
+    if let Err(error_message) =
+        send_command_protobuf(crisislab_message, &state.mesh_interface).await
+    {
+        return StringOrEmptyResponse::Err(StatusCode::INTERNAL_SERVER_ERROR, error_message).log();
+    }
+
+    let app_settings = state.app_settings.lock().await;
+
+    let telemetry_result: Result<(), String> = await_mesh_response(
+        &mut state.mesh_interface.subscribe(),
+        Duration::from_secs(app_settings.ad_hoc_telemetry_timeout_seconds),
+        |message| {
+            if let Some(crisislab_message::Message::Telemetry(_)) = message.message {
+                Some(())
+            } else {
+                None::<()>
+            }
+        },
+    )
+    .await;
+
+    if telemetry_result.is_ok() {
+        debug!("Detected telemetry packet in get_ad_hoc_telemetry");
         StringOrEmptyResponse::Ok
+    } else {
+        StringOrEmptyResponse::Err(
+            StatusCode::GATEWAY_TIMEOUT,
+            format!("Timed out waiting for telemetry packet. Consider increasing ad_hoc_telemetry_timeout_seconds if mesh traffic is high.")
+        )
+        .log()
     }
 }

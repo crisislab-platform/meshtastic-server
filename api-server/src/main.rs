@@ -65,6 +65,7 @@ pub struct AppSettings {
     signal_data_timeout_seconds: u64,
     route_cost_weight: EdgeWeight,
     route_hops_weight: EdgeWeight,
+    ad_hoc_telemetry_timeout_seconds: u64,
 }
 
 impl FromRef<AppState> for Arc<Mutex<AppSettings>> {
@@ -124,6 +125,7 @@ async fn main() {
             signal_data_timeout_seconds: CONFIG.default_signal_data_timeout_seconds,
             route_cost_weight: CONFIG.default_route_cost_weight,
             route_hops_weight: CONFIG.default_route_hops_weight,
+            ad_hoc_telemetry_timeout_seconds: CONFIG.default_ad_hoc_telemetry_timeout_seconds,
         })),
         updating_routes_lock: Arc::new(Mutex::new(())),
         telemetry_cache: Arc::new(Mutex::new(RingBuffer::new(CONFIG.telemetry_cache_capacity))),
