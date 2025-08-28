@@ -99,7 +99,7 @@ protobuf.load("../../protobufs/bundle.json", async (error, root) => {
 					})
 					const buffer = CrisislabMessage.encode(message).finish()
 					client.publish("for-server", Buffer.from(buffer))
-					await new Promise(resolve => setTimeout(resolve, 2000))
+					await new Promise(resolve => setTimeout(resolve, 5000))
 				}
 			case 'm':
 				client.subscribe("for-mesh")
