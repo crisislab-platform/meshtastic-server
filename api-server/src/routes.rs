@@ -10,7 +10,10 @@ use crate::{
         crisislab_message::{self, Telemetry},
         CrisislabMessage,
     },
-    utils::{self, FallibleJsonResponse, RingBuffer, SerializableIterator, StringOrEmptyResponse},
+    utils::{
+        self, send_command_protobuf, FallibleJsonResponse, RingBuffer, SerializableIterator,
+        StringOrEmptyResponse,
+    },
     AppSettings, AppState, MeshInterface,
 };
 use axum::{
@@ -19,41 +22,11 @@ use axum::{
     response::Response,
     Json,
 };
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use log::{debug, error, info};
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
-
-/// Encodes a given CrisislabMessage and sends it to the Tokio task responsible for publishing
-/// messages to the MQTT broker. May return an `Err(String)` if encoding or sending fails.
-async fn send_command_protobuf(
-    message: CrisislabMessage,
-    mesh_interface: &MeshInterface,
-) -> Result<(), String> {
-    // buffer for the encoded protobuf
-    let mut buffer = BytesMut::with_capacity(message.encoded_len());
-
-    if let Err(error) = message.encode(&mut buffer) {
-        return Err(format!("Failed to encode command as protobuf: {:?}", error));
-    }
-
-    if let Err(error) = mesh_interface
-        // the Tokio channel sender which goes to the publisher task
-        .clone_sender_to_publisher()
-        // that channel expects a non-mutable Bytes buffer hence .freeze()
-        .send(buffer.freeze())
-        .await
-    {
-        Err(format!(
-            "Failed to send command to MQTT publisher task: {:?}",
-            error
-        ))
-    } else {
-        debug!("send_command_protobuf: sent message to MQTT publisher task");
-        Ok(())
-    }
-}
 
 /// Structure that clients should send mesh settings in as JSON body
 #[derive(Deserialize, Debug)]
@@ -297,11 +270,11 @@ pub async fn update_routes(
     FallibleJsonResponse::Ok(next_hops_map)
 }
 
-pub async fn live_info(
+pub async fn live_telemetry(
     websocket_upgrade: WebSocketUpgrade,
     State(state): State<AppState>,
 ) -> Response {
-    websocket_upgrade.on_upgrade(|socket| handle_live_info_websocket(socket, state))
+    websocket_upgrade.on_upgrade(|socket| handle_live_telemetry_websocket(socket, state))
 }
 
 #[derive(Serialize)]
@@ -312,34 +285,6 @@ enum TelemetryWSPacket<'a> {
         SerializableIterator<'a, Telemetry, <&'a RingBuffer<Telemetry> as IntoIterator>::IntoIter>,
     ),
     Error(String),
-}
-
-async fn on_websocket_disconnect(state: &AppState) {
-    debug!("Client closed WS connection");
-
-    state.websocket_count.fetch_sub(1, Ordering::SeqCst);
-
-    // if there are no clients left, tell the mesh to stop sending live data
-    if state.websocket_count.load(Ordering::SeqCst) == 0 {
-        debug!("Last client disconnected from live info websocket");
-
-        let message = CrisislabMessage {
-            message: Some(crisislab_message::Message::StopLiveTelemetry(
-                crisislab_message::Empty {},
-            )),
-        };
-
-        if let Err(error_message) = send_command_protobuf(message, &state.mesh_interface).await {
-            error!(
-                "Failed to send StopLiveTelemetry message to mesh: {}",
-                error_message
-            );
-        } else {
-            debug!(
-                "Sent StopLiveTelemetry message to mesh, no more live data until a client reconnects"
-            );
-        }
-    }
 }
 
 async fn on_message_from_mesh(websocket: &mut WebSocket, state: &AppState, bytes: Bytes) {
@@ -358,7 +303,7 @@ async fn on_message_from_mesh(websocket: &mut WebSocket, state: &AppState, bytes
                     .await
                     .is_err()
                 {
-                    on_websocket_disconnect(&state).await;
+                    debug!("Client disconnected from websocket");
                     return;
                 }
 
@@ -382,37 +327,70 @@ async fn on_message_from_mesh(websocket: &mut WebSocket, state: &AppState, bytes
                 .await
                 .is_err()
             {
-                error!("Failed to inform WS client of decoding error");
-                on_websocket_disconnect(&state).await;
+                error!("Failed to inform WS client of decoding error. Disconnecting.");
                 return;
             }
         }
     }
 }
 
-async fn handle_live_info_websocket(mut websocket: WebSocket, state: AppState) {
-    info!("Client connected to live info websocket");
+pub async fn start_live_telemetry(State(state): State<AppState>) -> StringOrEmptyResponse {
+    debug!("Received request to start live telemetry");
 
-    if state.websocket_count.load(Ordering::SeqCst) == 0 {
-        debug!("New WS client is the only one, sending StartLiveTelemetry message to mesh");
+    let message = CrisislabMessage {
+        message: Some(crisislab_message::Message::StartLiveTelemetry(
+            crisislab_message::Empty {},
+        )),
+    };
 
-        let message = CrisislabMessage {
-            message: Some(crisislab_message::Message::StartLiveTelemetry(
-                crisislab_message::Empty {},
-            )),
-        };
+    if let Err(error_message) = send_command_protobuf(message, &state.mesh_interface).await {
+        StringOrEmptyResponse::Err(StatusCode::INTERNAL_SERVER_ERROR, error_message).log()
+    } else {
+        debug!("Sent StartLiveTelemetry message to mesh");
 
-        if let Err(error_message) = send_command_protobuf(message, &state.mesh_interface).await {
-            error!(
-                "Failed to send StartLiveTelemetry message to mesh: {}",
-                error_message
-            );
-        } else {
-            debug!("Sent StartLiveTelemetry message to mesh, live data will be sent now");
-        }
+        state
+            .live_telemetry_is_enabled
+            .store(true, Ordering::Relaxed);
+
+        StringOrEmptyResponse::Ok
     }
+}
 
-    state.websocket_count.fetch_add(1, Ordering::SeqCst);
+pub async fn stop_live_telemetry(State(state): State<AppState>) -> StringOrEmptyResponse {
+    debug!("Received request to stop live telemetry");
+
+    let message = CrisislabMessage {
+        message: Some(crisislab_message::Message::StopLiveTelemetry(
+            crisislab_message::Empty {},
+        )),
+    };
+
+    if let Err(error_message) = send_command_protobuf(message, &state.mesh_interface).await {
+        StringOrEmptyResponse::Err(StatusCode::INTERNAL_SERVER_ERROR, error_message).log()
+    } else {
+        debug!("Sent StopLiveTelemetry message to mesh");
+
+        state
+            .live_telemetry_is_enabled
+            .store(false, Ordering::Relaxed);
+
+        StringOrEmptyResponse::Ok
+    }
+}
+
+#[derive(Serialize)]
+pub struct LiveStatusResponse {
+    is_enabled: bool,
+}
+
+pub async fn get_live_status(State(state): State<AppState>) -> Json<LiveStatusResponse> {
+    Json(LiveStatusResponse {
+        is_enabled: state.live_telemetry_is_enabled.load(Ordering::Relaxed),
+    })
+}
+
+async fn handle_live_telemetry_websocket(mut websocket: WebSocket, state: AppState) {
+    info!("Client connected to live info websocket");
 
     // get recent telemetry and send to client
 
@@ -430,8 +408,7 @@ async fn handle_live_info_websocket(mut websocket: WebSocket, state: AppState) {
         .await
         .is_err()
     {
-        error!("Failed to send recent telemetry to WS client");
-        on_websocket_disconnect(&state).await;
+        error!("Failed to send recent telemetry to WS client. Disconnecting.");
         return;
     }
 
@@ -450,7 +427,7 @@ async fn handle_live_info_websocket(mut websocket: WebSocket, state: AppState) {
             // handle disconnections
             websocket_message = websocket.recv() => {
                 if websocket_message.is_none() || websocket_message.unwrap().is_err() {
-                    on_websocket_disconnect(&state).await;
+                    debug!("Client disconnected from websocket");
                     return;
                 }
             }
@@ -465,7 +442,7 @@ pub struct GetAdHocTelemetryBody {
 }
 
 #[axum::debug_handler]
-pub async fn get_ad_hoc_data(
+pub async fn get_ad_hoc_telemetry(
     State(mesh_interface): State<MeshInterface>,
     Json(body): Json<GetAdHocTelemetryBody>,
 ) -> StringOrEmptyResponse {
