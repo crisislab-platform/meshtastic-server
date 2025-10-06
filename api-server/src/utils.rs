@@ -1,74 +1,92 @@
 use bytes::BytesMut;
+use std::collections::VecDeque;
 use std::time::Duration;
 
 use axum::{http::StatusCode, response::IntoResponse, Json};
 use log::{debug, error};
 use prost::Message;
-use serde::ser::{SerializeSeq, Serializer};
 use serde::Serialize;
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::proto::meshtastic::CrisislabMessage;
 use crate::MeshInterface;
 
-pub struct RingBuffer<T> {
-    items: Vec<T>,
-    capacity: usize,
-    next_insertion_index: usize,
+#[derive(Serialize)]
+// make this is serialised as if it's only the buffer field
+#[serde(transparent)]
+pub struct BoundedVecDeque<T> {
+    buffer: VecDeque<T>,
+    #[serde(skip)]
+    max_len: usize,
 }
 
-impl<T> RingBuffer<T> {
-    pub fn new(capacity: usize) -> Self {
+impl<T> BoundedVecDeque<T> {
+    pub fn new(max_len: usize) -> Self {
         Self {
-            items: Vec::with_capacity(capacity),
-            capacity,
-            next_insertion_index: 0,
+            buffer: VecDeque::with_capacity(max_len),
+            max_len,
         }
     }
 
     pub fn write(&mut self, item: T) {
-        if self.items.len() < self.capacity {
-            self.items.push(item);
-        } else {
-            self.items[self.next_insertion_index] = item;
+        if self.buffer.len() == self.max_len {
+            self.buffer.pop_front();
         }
+        self.buffer.push_back(item);
+    }
 
-        self.next_insertion_index += 1;
-        self.next_insertion_index %= self.capacity;
+    pub fn resize(&mut self, new_capacity: usize) {
+        if new_capacity >= self.max_len {
+            // if we're growing the array, we simply extend the capacity
+            self.buffer
+                .reserve_exact(new_capacity - self.buffer.len());
+        } else {
+            if self.buffer.len() > new_capacity {
+                self.buffer.drain(0..self.buffer.len() - new_capacity);
+            }
+
+            if self.buffer.len() < self.buffer.capacity() {
+                let mut new_buffer = VecDeque::with_capacity(new_capacity);
+                new_buffer.append(&mut self.buffer);
+                self.buffer = new_buffer;
+            }
+        }
+    }
+
+    pub fn capacity(&self) -> usize {
+        self.buffer.capacity()
     }
 }
 
 // allows the ring buffer to be converted into an iterator starting at the first/oldest item
 
-impl<'a, T> IntoIterator for &'a RingBuffer<T> {
+impl<'a, T> IntoIterator for &'a BoundedVecDeque<T> {
     type Item = &'a T;
-    type IntoIter = std::iter::Chain<std::slice::Iter<'a, T>, std::slice::Iter<'a, T>>;
+    type IntoIter = std::collections::vec_deque::Iter<'a, T>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.items[self.next_insertion_index..]
-            .iter()
-            .chain(self.items[..self.next_insertion_index].iter())
+        self.buffer.iter()
     }
 }
 
 /// Wrapper struct that allows an iterator to serialised
-pub struct SerializableIterator<'a, T: Serialize + 'a, I: Iterator<Item = &'a T> + Clone>(pub I);
-
-impl<'a, T, I> Serialize for SerializableIterator<'a, T, I>
-where
-    I: Iterator<Item = &'a T> + Clone,
-    T: serde::ser::Serialize + 'a,
-{
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut seq = serializer.serialize_seq(None)?;
-
-        for item in self.0.clone() {
-            seq.serialize_element(item)?;
-        }
-
-        seq.end()
-    }
-}
+// pub struct SerializableIterator<'a, T: Serialize + 'a, I: Iterator<Item = &'a T> + Clone>(pub I);
+//
+// impl<'a, T, I> Serialize for SerializableIterator<'a, T, I>
+// where
+//     I: Iterator<Item = &'a T> + Clone,
+//     T: serde::ser::Serialize + 'a,
+// {
+//     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+//         let mut seq = serializer.serialize_seq(None)?;
+//
+//         for item in self.0.clone() {
+//             seq.serialize_element(item)?;
+//         }
+//
+//         seq.end()
+//     }
+// }
 
 pub enum FallibleJsonResponse<T: Serialize> {
     Ok(T),
@@ -199,5 +217,111 @@ pub async fn send_command_protobuf(
     } else {
         debug!("send_command_protobuf: sent message to MQTT publisher task");
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    mod bounded_vec_deque_tests {
+        use super::super::BoundedVecDeque;
+
+        #[test]
+        fn creation() {
+            let items = BoundedVecDeque::<usize>::new(3);
+            assert_eq!(items.capacity(), 3);
+        }
+
+        #[test]
+        fn write() {
+            let mut items = BoundedVecDeque::<usize>::new(2);
+
+            items.write(5);
+            items.write(6);
+            items.write(7);
+            assert_eq!(items.capacity(), 2);
+            assert!(items.into_iter().eq([6, 7].iter()));
+        }
+
+        #[test]
+        fn resize_empty() {
+            let mut items = BoundedVecDeque::<usize>::new(3);
+
+            items.resize(5);
+            assert_eq!(items.capacity(), 5);
+
+            items.resize(2);
+            assert_eq!(items.capacity(), 2);
+
+            items.resize(0);
+            assert_eq!(items.capacity(), 0);
+        }
+
+        #[test]
+        fn shrink_full() {
+            let mut items = BoundedVecDeque::<usize>::new(5);
+
+            items.write(1);
+            items.write(2);
+            items.write(3);
+            items.write(4);
+            items.write(5);
+
+            items.resize(3);
+            assert_eq!(items.capacity(), 3);
+            assert!(items.into_iter().eq([3, 4, 5].iter()));
+        }
+
+        #[test]
+        fn expand_full() {
+            let mut items = BoundedVecDeque::<usize>::new(3);
+
+            items.write(1);
+            items.write(2);
+            items.write(3);
+
+            items.resize(5);
+            assert_eq!(items.capacity(), 5);
+            assert!(items.into_iter().eq([1, 2, 3].iter()));
+        }
+
+        #[test]
+        fn shrink_not_full_and_drop() {
+            let mut items = BoundedVecDeque::<usize>::new(6);
+
+            items.write(1);
+            items.write(2);
+            items.write(3);
+            items.write(4);
+
+            items.resize(3);
+            assert_eq!(items.capacity(), 3);
+            assert!(items.into_iter().eq([2, 3, 4].iter()));
+        }
+
+        #[test]
+        fn shrink_not_full_no_drop() {
+            let mut items = BoundedVecDeque::<usize>::new(6);
+
+            items.write(1);
+            items.write(2);
+            items.write(3);
+            items.write(4);
+
+            items.resize(5);
+            assert_eq!(items.capacity(), 5);
+            assert!(items.into_iter().eq([1, 2, 3, 4].iter()));
+        }
+
+        #[test]
+        fn expand_not_full() {
+            let mut items = BoundedVecDeque::<usize>::new(3);
+
+            items.write(1);
+            items.write(2);
+
+            items.resize(4);
+            assert_eq!(items.capacity(), 4);
+            assert!(items.into_iter().eq([1, 2].iter()));
+        }
     }
 }
