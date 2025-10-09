@@ -11,8 +11,7 @@ use crate::{
         CrisislabMessage,
     },
     utils::{
-        self, await_mesh_response, send_command_protobuf, FallibleJsonResponse, RingBuffer,
-        SerializableIterator, StringOrEmptyResponse,
+        self, await_mesh_response, send_command_protobuf, BoundedVecDeque, FallibleJsonResponse, StringOrEmptyResponse
     },
     AppSettings, AppState, MeshInterface,
 };
@@ -270,6 +269,68 @@ pub async fn update_routes(
     FallibleJsonResponse::Ok(next_hops_map)
 }
 
+pub async fn live_telemetry(
+    websocket_upgrade: WebSocketUpgrade,
+    State(state): State<AppState>,
+) -> Response {
+    websocket_upgrade.on_upgrade(|socket| handle_live_telemetry_websocket(socket, state))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+enum TelemetryWSPacket<'a> {
+    Telemetry(&'a Telemetry),
+    Cache(&'a BoundedVecDeque<Telemetry>),
+    Error(String),
+}
+
+async fn on_message_from_mesh(websocket: &mut WebSocket, state: &AppState, bytes: Bytes) {
+    match CrisislabMessage::decode(bytes) {
+        Ok(crisislab_message) => {
+            if let Some(crisislab_message::Message::Telemetry(live_data)) =
+                crisislab_message.message
+            {
+                // stringify data and send to client on websocket
+                if websocket
+                    .send(axum::extract::ws::Message::Text(
+                        serde_json::to_string(&TelemetryWSPacket::Telemetry(&live_data))
+                            .expect("Failed to serialize CrisislabMessage for WS message")
+                            .into(),
+                    ))
+                    .await
+                    .is_err()
+                {
+                    debug!("Client disconnected from websocket");
+                    return;
+                }
+
+                state.telemetry_cache.lock().await.write(live_data);
+            }
+        }
+        Err(error) => {
+            error!("Failed to decode CrisislabMessage: {:?}", error);
+
+            // notify client of decoding error
+
+            let packet =
+                TelemetryWSPacket::Error(format!("Failed to decode CrisislabMessage: {:?}", error));
+
+            if websocket
+                .send(axum::extract::ws::Message::Text(
+                    serde_json::to_string(&packet)
+                        .expect("Failed to serialize error packet to send to WS client")
+                        .into(),
+                ))
+                .await
+                .is_err()
+            {
+                error!("Failed to inform WS client of decoding error. Disconnecting.");
+                return;
+            }
+        }
+    }
+}
+
 pub async fn start_live_telemetry(State(state): State<AppState>) -> StringOrEmptyResponse {
     debug!("Received request to start live telemetry");
 
@@ -325,70 +386,6 @@ pub async fn get_live_status(State(state): State<AppState>) -> Json<LiveStatusRe
     })
 }
 
-pub async fn live_telemetry(
-    websocket_upgrade: WebSocketUpgrade,
-    State(state): State<AppState>,
-) -> Response {
-    websocket_upgrade.on_upgrade(|socket| handle_live_telemetry_websocket(socket, state))
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "snake_case")]
-enum TelemetryWSPacket<'a> {
-    Telemetry(&'a Telemetry),
-    Cache(
-        SerializableIterator<'a, Telemetry, <&'a RingBuffer<Telemetry> as IntoIterator>::IntoIter>,
-    ),
-    Error(String),
-}
-
-async fn on_message_from_mesh(websocket: &mut WebSocket, state: &AppState, bytes: Bytes) {
-    match CrisislabMessage::decode(bytes) {
-        Ok(crisislab_message) => {
-            if let Some(crisislab_message::Message::Telemetry(live_data)) =
-                crisislab_message.message
-            {
-                // stringify data and send to client on websocket
-                if websocket
-                    .send(axum::extract::ws::Message::Text(
-                        serde_json::to_string(&TelemetryWSPacket::Telemetry(&live_data))
-                            .expect("Failed to serialize CrisislabMessage for WS message")
-                            .into(),
-                    ))
-                    .await
-                    .is_err()
-                {
-                    debug!("Client disconnected from websocket");
-                    return;
-                }
-
-                state.telemetry_cache.lock().await.write(live_data);
-            }
-        }
-        Err(error) => {
-            error!("Failed to decode CrisislabMessage: {:?}", error);
-
-            // notify client of decoding error
-
-            let packet =
-                TelemetryWSPacket::Error(format!("Failed to decode CrisislabMessage: {:?}", error));
-
-            if websocket
-                .send(axum::extract::ws::Message::Text(
-                    serde_json::to_string(&packet)
-                        .expect("Failed to serialize error packet to send to WS client")
-                        .into(),
-                ))
-                .await
-                .is_err()
-            {
-                error!("Failed to inform WS client of decoding error. Disconnecting.");
-                return;
-            }
-        }
-    }
-}
-
 async fn handle_live_telemetry_websocket(mut websocket: WebSocket, state: AppState) {
     info!("Client connected to live info websocket");
 
@@ -396,10 +393,8 @@ async fn handle_live_telemetry_websocket(mut websocket: WebSocket, state: AppSta
 
     let telemetry_cache = state.telemetry_cache.lock().await;
 
-    let serialised_cache = serde_json::to_string(&TelemetryWSPacket::Cache(SerializableIterator(
-        telemetry_cache.into_iter(),
-    )))
-    .expect("Failed to serialise telemetry cache");
+    let serialised_cache = serde_json::to_string(&TelemetryWSPacket::Cache(&*telemetry_cache))
+        .expect("Failed to serialise telemetry cache");
 
     drop(telemetry_cache);
 

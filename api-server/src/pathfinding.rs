@@ -73,10 +73,10 @@ async fn get_route_cost(
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct DijkstraEntry<V: Clone> {
-    pub total_distance: EdgeWeight,
-    pub total_cost: EdgeWeight,
-    pub previous: Option<V>,
+    pub total_distance: EdgeWeight, // sum of edge weights
     pub hop_count: usize,
+    pub total_cost: EdgeWeight, // cost calculated based on the previous two fields
+    pub previous: Option<V>,
 }
 
 type DijkstraResult<V> = HashMap<V, DijkstraEntry<V>>;
@@ -157,11 +157,6 @@ where
             )
             .await;
 
-            println!(
-                "current: {:?}, neighbour: {:?} (w = {}), old_cost: {}, new_cost: {}",
-                current, neighbour, weight, old_cost, new_cost
-            );
-
             if new_cost < old_cost {
                 result.insert(
                     neighbour.clone(),
@@ -211,11 +206,6 @@ where
             gateway_id,
         )
         .await;
-
-        println!(
-            "gateway_id: {}, dijkstra_table: {:?}",
-            gateway_id, dijkstra_table
-        );
 
         for (node_id, entry) in dijkstra_table.iter().to_owned() {
             if node_id == gateway_id {

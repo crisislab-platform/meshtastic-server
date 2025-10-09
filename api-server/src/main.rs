@@ -22,7 +22,7 @@ use serde::Serialize;
 use std::sync::{atomic::AtomicBool, Arc};
 use tokio::sync::{broadcast, mpsc, Mutex};
 use tower_http::cors::CorsLayer;
-use utils::RingBuffer;
+use utils::BoundedVecDeque;
 
 /// Outer state struct to be passed to Axum handlers
 #[derive(Clone)]
@@ -30,7 +30,7 @@ pub struct AppState {
     mesh_interface: MeshInterface,
     app_settings: Arc<Mutex<AppSettings>>,
     updating_routes_lock: Arc<Mutex<()>>,
-    telemetry_cache: Arc<Mutex<RingBuffer<Telemetry>>>,
+    telemetry_cache: Arc<Mutex<BoundedVecDeque<Telemetry>>>,
     live_telemetry_is_enabled: Arc<AtomicBool>,
 }
 
@@ -128,7 +128,9 @@ async fn main() {
             ad_hoc_telemetry_timeout_seconds: CONFIG.default_ad_hoc_telemetry_timeout_seconds,
         })),
         updating_routes_lock: Arc::new(Mutex::new(())),
-        telemetry_cache: Arc::new(Mutex::new(RingBuffer::new(CONFIG.telemetry_cache_capacity))),
+        telemetry_cache: Arc::new(Mutex::new(BoundedVecDeque::new(
+            CONFIG.telemetry_cache_capacity,
+        ))),
         live_telemetry_is_enabled: Arc::new(AtomicBool::new(false)),
     };
 
