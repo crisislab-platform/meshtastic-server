@@ -87,11 +87,11 @@ pub async fn init_client() -> MeshInterface {
             CONFIG.mqtt_incoming_topic
         ));
 
-    // channel for sending message from the mqtt subscriber task to all the endpoint handlers
+    // channel for endpoint handlers to send message to the mqtt publisher task
     let (sender_to_publisher, outgoing_msg_receiver) =
         mpsc::channel::<Bytes>(CONFIG.channel_capacity);
 
-    // channel for endpoint handlers to send message to the mqtt publisher task
+    // channel for sending message from the mqtt subscriber task to all the endpoint handlers
     let (sender_to_subscribers, _) = broadcast::channel::<Bytes>(CONFIG.channel_capacity);
 
     publisher_task(client, outgoing_msg_receiver);

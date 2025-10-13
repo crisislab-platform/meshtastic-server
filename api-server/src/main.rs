@@ -2,8 +2,8 @@ mod config;
 mod mqtt;
 mod pathfinding;
 mod proto;
-mod routes;
 mod utils;
+mod routes;
 
 use axum::{
     extract::FromRef,
@@ -29,7 +29,7 @@ use utils::BoundedVecDeque;
 pub struct AppState {
     mesh_interface: MeshInterface,
     app_settings: Arc<Mutex<AppSettings>>,
-    updating_routes_lock: Arc<Mutex<()>>,
+    updating_next_hops_lock: Arc<Mutex<()>>,
     telemetry_cache: Arc<Mutex<BoundedVecDeque<Telemetry>>>,
     live_telemetry_is_enabled: Arc<AtomicBool>,
 }
@@ -42,16 +42,21 @@ pub struct MeshInterface {
 }
 
 impl MeshInterface {
-    pub fn clone_sender_to_publisher(&self) -> mpsc::Sender<Bytes> {
+    fn get_sender_to_publisher(&self) -> mpsc::Sender<Bytes> {
         self.sender_to_publisher.clone()
     }
 
-    pub fn subscribe(&self) -> broadcast::Receiver<Bytes> {
+    fn subscribe(&self) -> broadcast::Receiver<Bytes> {
         self.sender_to_subscribers.subscribe()
+    }
+
+    #[cfg(test)]
+    fn get_sender_to_subscriber(&self) -> &broadcast::Sender<Bytes> {
+        &self.sender_to_subscribers
     }
 }
 
-// These FromRef impls allow the outer AppState struct to be derferenced to inner components
+// These FromRef impls allow the outer AppState struct to be dereferenced to inner components
 impl FromRef<AppState> for MeshInterface {
     fn from_ref(app_state: &AppState) -> MeshInterface {
         app_state.mesh_interface.clone()
@@ -94,19 +99,19 @@ pub fn init_app(state: AppState) -> Router {
         .allow_credentials(true);
 
     Router::new()
-        .route("/admin/set-mesh-settings", post(routes::set_mesh_settings))
+        .route("/admin/set-mesh-settings", post(routes::settings::set_mesh_settings))
         .route(
             "/admin/set-server-settings",
-            post(routes::set_server_settings),
+            post(routes::settings::set_server_settings),
         )
-        .route("/get-mesh-settings", get(routes::get_mesh_settings))
-        .route("/get-server-settings", get(routes::get_server_settings))
-        .route("/admin/update-routes", get(routes::update_routes))
-        .route("/telemetry/socket", any(routes::live_telemetry))
-        .route("/telemetry/start-live", any(routes::start_live_telemetry))
-        .route("/telemetry/stop-live", any(routes::stop_live_telemetry))
-        .route("/telemetry/live-status", get(routes::get_live_status))
-        .route("/telemetry/ad-hoc", get(routes::get_ad_hoc_telemetry))
+        .route("/get-mesh-settings", get(routes::settings::get_mesh_settings))
+        .route("/get-server-settings", get(routes::settings::get_server_settings))
+        .route("/admin/update-routes", get(routes::update_next_hops::update_next_hops))
+        .route("/telemetry/socket", any(routes::telemetry::live_telemetry))
+        .route("/telemetry/start-live", any(routes::telemetry::start_live_telemetry))
+        .route("/telemetry/stop-live", any(routes::telemetry::stop_live_telemetry))
+        .route("/telemetry/live-status", get(routes::telemetry::get_live_telemetry_status))
+        .route("/telemetry/ad-hoc", get(routes::telemetry::get_ad_hoc_telemetry))
         .layer(cors)
         .with_state(state)
 }
@@ -127,7 +132,7 @@ async fn main() {
             route_hops_weight: CONFIG.default_route_hops_weight,
             ad_hoc_telemetry_timeout_seconds: CONFIG.default_ad_hoc_telemetry_timeout_seconds,
         })),
-        updating_routes_lock: Arc::new(Mutex::new(())),
+        updating_next_hops_lock: Arc::new(Mutex::new(())),
         telemetry_cache: Arc::new(Mutex::new(BoundedVecDeque::new(
             CONFIG.telemetry_cache_capacity,
         ))),

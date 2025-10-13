@@ -36,6 +36,10 @@ fn qos_from_str(string: &str) -> Result<QoS, String> {
 }
 
 pub static CONFIG: Lazy<Config> = Lazy::new(|| {
+    if cfg!(test) {
+        panic!("CONFIG should not be loaded in tests!");
+    }
+
     let config = Config {
         mqtt_username: get_env_var("MQTT_USERNAME"),
         mqtt_password: get_env_var("MQTT_PASSWORD"),
