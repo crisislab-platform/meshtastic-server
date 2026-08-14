@@ -4,6 +4,7 @@
 
 This server is an interface between the MQTT broker (which is connected the gateway nodes in the LoRa mesh) and CRISiSLab's Meshtastic Portal. This document will explain how to use the API, and how to run the server yourself.
 
+
 ## API Endpoints
 
 ### `POST /admin/set-mesh-settings`
