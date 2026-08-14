@@ -79,6 +79,7 @@ pub fn init_app(state: AppState) -> Router {
     let allowlist = [
         HeaderValue::from_static("http://localhost:8000"),
         HeaderValue::from_static("http://127.0.0.1:8000"),
+        HeaderValue::from_static("https://monitor.wmmp.xyz"),
     ];
 
     let cors = CorsLayer::new()
