@@ -212,6 +212,15 @@ where
                 continue;
             }
 
+            // Dijkstra leaves `previous: None` for any node it never actually reached
+            // from this gateway (still in its initial state) - on a large or not-fully-
+            // connected mesh that's normal, not an error, so just skip contributing a
+            // route from this gateway for this node rather than propagating a `None`
+            // into `result`, which the final step below cannot handle.
+            if entry.previous.is_none() {
+                continue;
+            }
+
             // insert vec if not already present
             if !result.contains_key(node_id) {
                 result.insert(node_id.clone(), Vec::with_capacity(1));
