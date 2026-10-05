@@ -44,6 +44,7 @@ fn handle_mqtt_message(topic: String, payload: Bytes, tx_to_handlers: broadcast:
 }
 
 fn subscriber_task(
+    client: AsyncClient,
     mut event_loop: EventLoop,
     tx_to_handlers: broadcast::Sender<Bytes>,
 ) -> JoinHandle<()> {
@@ -52,12 +53,25 @@ fn subscriber_task(
 
         loop {
             match event_loop.poll().await {
-                Ok(event) => {
-                    // for every message being received from the broker
-                    if let Event::Incoming(Packet::Publish(packet)) = event {
-                        handle_mqtt_message(packet.topic, packet.payload, tx_to_handlers.clone());
+                Ok(Event::Incoming(Packet::ConnAck(_))) => {
+                    // rumqttc reconnects with clean_session=true (the crate default, and we
+                    // don't override it), so the broker forgets our subscription on every
+                    // reconnect - (re-)subscribe every time we see a fresh ConnAck, not just
+                    // once at startup, or the server silently goes deaf after the first
+                    // network blip / broker restart / keepalive timeout.
+                    if let Err(error) = client
+                        .subscribe(CONFIG.mqtt_incoming_topic.clone(), CONFIG.mqtt_qos)
+                        .await
+                    {
+                        error!("Failed to (re-)subscribe to {}: {:?}", CONFIG.mqtt_incoming_topic, error);
+                    } else {
+                        debug!("(Re-)subscribed to {}", CONFIG.mqtt_incoming_topic);
                     }
                 }
+                Ok(Event::Incoming(Packet::Publish(packet))) => {
+                    handle_mqtt_message(packet.topic, packet.payload, tx_to_handlers.clone());
+                }
+                Ok(_) => {}
                 Err(error) => {
                     error!("Error polling MQTT event loop: {:?}", error);
                     tokio::time::sleep(Duration::from_secs(3)).await;
@@ -79,13 +93,8 @@ pub async fn init_client() -> MeshInterface {
 
     let (client, event_loop) = AsyncClient::new(options, CONFIG.channel_capacity);
 
-    client
-        .subscribe(CONFIG.mqtt_incoming_topic.clone(), CONFIG.mqtt_qos)
-        .await
-        .expect(&format!(
-            "Failed to subscribe to {} channel",
-            CONFIG.mqtt_incoming_topic
-        ));
+    // Subscribing now happens inside subscriber_task on every ConnAck (including the
+    // first), instead of once here - see subscriber_task for why.
 
     // channel for sending message from the mqtt subscriber task to all the endpoint handlers
     let (sender_to_publisher, outgoing_msg_receiver) =
@@ -94,11 +103,11 @@ pub async fn init_client() -> MeshInterface {
     // channel for endpoint handlers to send message to the mqtt publisher task
     let (sender_to_subscribers, _) = broadcast::channel::<Bytes>(CONFIG.channel_capacity);
 
-    publisher_task(client, outgoing_msg_receiver);
+    publisher_task(client.clone(), outgoing_msg_receiver);
 
     // we need to clone the broadcast transmitter because it's being returned
     // so that .subscribe() can be called on it to create a receiver
-    subscriber_task(event_loop, sender_to_subscribers.clone());
+    subscriber_task(client, event_loop, sender_to_subscribers.clone());
 
     MeshInterface {
         sender_to_publisher,
